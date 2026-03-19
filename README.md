@@ -52,7 +52,7 @@ Floor heating systems respond slowly — typically 2–4 hours between a setpoin
 3. Paste `https://github.com/antongitnow/ha-smart-heatpump` and select category **AppDaemon**.
 4. Click **Add**, then find **Smart Heatpump Controller** in the HACS store and click **Download**.
 
-HACS will place the app files in `/config/appdaemon/apps/smart_heatpump/` automatically. You still need to complete Steps 3–8 below (entity config, packages, dashboard, notifications).
+HACS will place the app files in `/config/appdaemon/apps/smart_heatpump/` automatically. You still need to complete Steps 3–7 below (config, packages, dashboard).
 
 <details>
 <summary><strong>Manual installation (alternative)</strong></summary>
@@ -67,21 +67,49 @@ cp smart_heatpump.yaml /config/appdaemon/apps/smart_heatpump/
 
 </details>
 
-### Step 3 — Edit `smart_heatpump.yaml` with your entity names
+### Step 3 — Configure `smart_heatpump.yaml`
 
-Open `/config/appdaemon/apps/smart_heatpump/smart_heatpump.yaml` and replace the PLACEHOLDER values:
+Open `/config/appdaemon/apps/smart_heatpump/smart_heatpump.yaml` and replace the PLACEHOLDER values with your entity names. Optionally add notification targets:
 
 ```yaml
 smart_heatpump:
   module: smart_heatpump
   class: SmartHeatpump
 
+  # Required — replace with your actual entity names
   thermostat_entity: "climate.YOUR_THERMOSTAT"       # <-- replace
   p1_net_power_entity: "sensor.YOUR_POWER_SENSOR"    # <-- replace
 
   weather_entity: "weather.home"                     # change if needed
   forecast_solar_entity: null                        # see Forecast.Solar section
+
+  # Optional — push notifications on rule change
+  # Uncomment and list your notify service names (without the "notify." prefix):
+  # notify_targets:
+  #   - mobile_app_antons_iphone    # HA Companion App push
+  #   - telegram                     # Telegram Bot integration
+  #   - persistent_notification      # HA notification bell (built-in)
+  #   - group_family                 # Notify group for multiple devices
 ```
+
+**Supported notification targets:**
+
+| Target | Service name | Setup |
+|---|---|---|
+| HA Companion App | `mobile_app_<your_phone>` | Install the HA app on your phone — auto-detected |
+| Telegram | `telegram` | [Telegram Bot integration](https://www.home-assistant.io/integrations/telegram/) |
+| HA notification bell | `persistent_notification` | Built-in, no setup needed |
+| Notify group | `group_family` | [Notify groups](https://www.home-assistant.io/integrations/group/#notify-groups) for multiple devices |
+
+Notifications are only sent when the active rule *changes* (e.g. `default` → `preheat`), not every evaluation cycle. A dashboard toggle (`input_boolean.shp_notifications_enabled`) lets you mute/unmute without editing YAML.
+
+**Example notification:**
+
+> 🏠 **Smart Heatpump**
+>
+> 🔥 Cold period coming — pre-heating while COP is still efficient
+>
+> Setpoint: 21.5°C · Outdoor: 6.2°C · Solar export: 0W · Previous mode: default
 
 ### Step 4 — How to find your entity names
 
@@ -117,40 +145,6 @@ Restart HA to create the helper entities. Then restart AppDaemon (or the AppDaem
 4. Paste the YAML content into the card editor.
 5. Update the `climate.PLACEHOLDER_THERMOSTAT` reference to your actual thermostat entity.
 6. Click **Save**.
-
-### Step 8 — Set up push notifications (optional)
-
-The controller can send a push notification whenever the active rule changes (e.g. `default` → `preheat`). You won't get spammed every evaluation cycle — only when the controller's behaviour actually changes.
-
-Edit `smart_heatpump.yaml` and uncomment / add your notification targets:
-
-```yaml
-  notify_targets:
-    - mobile_app_antons_iphone      # HA Companion App push
-    - telegram                       # Telegram Bot integration
-```
-
-Each entry is a HA `notify` service name **without** the `notify.` prefix. You can use any combination of:
-
-| Target | Service name | Setup |
-|---|---|---|
-| HA Companion App | `mobile_app_<your_phone>` | Install the HA app on your phone — auto-detected |
-| Telegram | `telegram` | [Telegram Bot integration](https://www.home-assistant.io/integrations/telegram/) |
-| HA notification bell | `persistent_notification` | Built-in, no setup needed |
-| Notify group | `group_family` | [Notify groups](https://www.home-assistant.io/integrations/group/#notify-groups) for multiple devices |
-
-A dashboard toggle (`input_boolean.shp_notifications_enabled`) lets you mute/unmute notifications without editing YAML.
-
-**Example notification:**
-
-> 🏠 **Smart Heatpump**
->
-> 🔥 Cold period coming — pre-heating while COP is still efficient
->
-> Setpoint: 21.5°C
-> Outdoor: 6.2°C
-> Solar export: 0W
-> Previous mode: default
 
 ---
 
