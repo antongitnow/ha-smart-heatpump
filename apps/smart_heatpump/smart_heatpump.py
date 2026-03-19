@@ -22,6 +22,20 @@ import appdaemon.plugins.hass.hassapi as hass
 # ---------------------------------------------------------------------------
 # Hardcoded defaults — used when an input_number entity is unavailable (FR-12)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Human-readable rule descriptions for notifications
+# ---------------------------------------------------------------------------
+_RULE_DESCRIPTIONS: dict[str, str] = {
+    "solar_boost": "☀️ Solar surplus detected — storing free energy as heat",
+    "solar_predicted": "🌤️ Solar surplus predicted — pre-heating before surplus starts",
+    "preheat": "🔥 Cold period coming — pre-heating while COP is still efficient",
+    "conserve": "❄️ COP poor, no recovery expected — holding minimum temperature",
+    "conserve_await_recovery": "⏳ COP poor but recovery coming — waiting for efficient window",
+    "default": "✅ Normal operation — maintaining ideal temperature",
+    "error_fallback": "⚠️ Error occurred — using safe fallback temperature",
+    "initialising": "🔄 Controller starting up",
+}
+
 _DEFAULTS: dict[str, float] = {
     "temp_ideal": 21.0,
     "temp_minimum": 20.5,
@@ -157,6 +171,8 @@ class SmartHeatpump(hass.Hass):
         """Called by AppDaemon on application startup."""
         # Stateful solar confirmation tracker (FR-02)
         self._solar_surplus_since: datetime | None = None
+        # Track previous rule for change-based notifications
+        self._previous_rule: str | None = None
         self.log("SmartHeatpump initialising", level="INFO")
         # Schedule first evaluation immediately; subsequent runs self-reschedule
         self.run_in(self._run_evaluation, 0)
@@ -260,6 +276,17 @@ class SmartHeatpump(hass.Hass):
 
         # --- Write active rule to dashboard entity (FR-10) ---
         self._write_active_rule(rule)
+
+        # --- Send notification on rule change ---
+        if rule != self._previous_rule and self._previous_rule is not None:
+            self._send_rule_change_notification(
+                old_rule=self._previous_rule,
+                new_rule=rule,
+                target=target,
+                outdoor_temp_c=outdoor_temp_c,
+                solar_surplus_w=solar_surplus_w,
+            )
+        self._previous_rule = rule
 
     # ------------------------------------------------------------------
     # Sensor readers
@@ -442,6 +469,72 @@ class SmartHeatpump(hass.Hass):
                 f"Failed to write active rule '{rule}': {exc}",
                 level="WARNING",
             )
+
+    # ------------------------------------------------------------------
+    # Notifications
+    # ------------------------------------------------------------------
+
+    def _send_rule_change_notification(
+        self,
+        old_rule: str,
+        new_rule: str,
+        target: float,
+        outdoor_temp_c: float | None,
+        solar_surplus_w: float | None,
+    ) -> None:
+        """Send a push notification when the active rule changes.
+
+        Only sends if:
+        - input_boolean.shp_notifications_enabled is on (or unavailable → default on)
+        - notify_targets is configured and non-empty in smart_heatpump.yaml
+        """
+        # Check the dashboard toggle
+        try:
+            enabled = self.get_state("input_boolean.shp_notifications_enabled")
+            if enabled == "off":
+                self.log(
+                    "Notifications disabled via dashboard toggle.",
+                    level="DEBUG",
+                )
+                return
+        except Exception:  # noqa: BLE001
+            pass  # If toggle is unavailable, default to sending
+
+        targets: list[str] = self.args.get("notify_targets") or []
+        if not targets:
+            return
+
+        # Build human-readable message
+        description = _RULE_DESCRIPTIONS.get(new_rule, new_rule)
+        outdoor_str = f"{outdoor_temp_c:.1f}°C" if outdoor_temp_c is not None else "N/A"
+        surplus_str = f"{solar_surplus_w:.0f}W" if solar_surplus_w is not None else "N/A"
+
+        title = "🏠 Smart Heatpump"
+        message = (
+            f"{description}\n"
+            f"\n"
+            f"Setpoint: {target:.1f}°C\n"
+            f"Outdoor: {outdoor_str}\n"
+            f"Solar export: {surplus_str}\n"
+            f"Previous mode: {old_rule}"
+        )
+
+        for target_name in targets:
+            try:
+                self.call_service(
+                    f"notify/{target_name}",
+                    title=title,
+                    message=message,
+                )
+                self.log(
+                    f"Notification sent to '{target_name}': {old_rule} → {new_rule}",
+                    level="INFO",
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.log(
+                    f"Failed to send notification to '{target_name}': {exc}",
+                    level="WARNING",
+                )
 
     # ------------------------------------------------------------------
     # Configuration helpers

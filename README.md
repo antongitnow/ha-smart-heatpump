@@ -52,7 +52,7 @@ Floor heating systems respond slowly — typically 2–4 hours between a setpoin
 3. Paste `https://github.com/antongitnow/ha-smart-heatpump` and select category **AppDaemon**.
 4. Click **Add**, then find **Smart Heatpump Controller** in the HACS store and click **Download**.
 
-HACS will place the files in `/config/appdaemon/apps/smart_heatpump/` automatically.
+HACS will place the app files in `/config/appdaemon/apps/smart_heatpump/` automatically. You still need to complete Steps 3–8 below (entity config, packages, dashboard, notifications).
 
 <details>
 <summary><strong>Manual installation (alternative)</strong></summary>
@@ -118,6 +118,40 @@ Restart HA to create the helper entities. Then restart AppDaemon (or the AppDaem
 5. Update the `climate.PLACEHOLDER_THERMOSTAT` reference to your actual thermostat entity.
 6. Click **Save**.
 
+### Step 8 — Set up push notifications (optional)
+
+The controller can send a push notification whenever the active rule changes (e.g. `default` → `preheat`). You won't get spammed every evaluation cycle — only when the controller's behaviour actually changes.
+
+Edit `smart_heatpump.yaml` and uncomment / add your notification targets:
+
+```yaml
+  notify_targets:
+    - mobile_app_antons_iphone      # HA Companion App push
+    - telegram                       # Telegram Bot integration
+```
+
+Each entry is a HA `notify` service name **without** the `notify.` prefix. You can use any combination of:
+
+| Target | Service name | Setup |
+|---|---|---|
+| HA Companion App | `mobile_app_<your_phone>` | Install the HA app on your phone — auto-detected |
+| Telegram | `telegram` | [Telegram Bot integration](https://www.home-assistant.io/integrations/telegram/) |
+| HA notification bell | `persistent_notification` | Built-in, no setup needed |
+| Notify group | `group_family` | [Notify groups](https://www.home-assistant.io/integrations/group/#notify-groups) for multiple devices |
+
+A dashboard toggle (`input_boolean.shp_notifications_enabled`) lets you mute/unmute notifications without editing YAML.
+
+**Example notification:**
+
+> 🏠 **Smart Heatpump**
+>
+> 🔥 Cold period coming — pre-heating while COP is still efficient
+>
+> Setpoint: 21.5°C
+> Outdoor: 6.2°C
+> Solar export: 0W
+> Previous mode: default
+
 ---
 
 ## Forecast.Solar setup (optional but recommended)
@@ -156,6 +190,7 @@ All parameters are adjustable from the Lovelace dashboard without restarting any
 | `input_number.shp_forecast_horizon_hours` | 24 | 1–48 | h | How far ahead to check for cold periods |
 | `input_number.shp_thermal_lag_hours` | 3 | 0–6 | h | Floor heating warm-up lag |
 | `input_number.shp_evaluation_interval_min` | 15 | 5–60 | min | Controller re-evaluation frequency |
+| `input_boolean.shp_notifications_enabled` | on | on/off | — | Enable/disable push notifications on rule change |
 
 ---
 
@@ -229,7 +264,7 @@ The `input_text.shp_active_rule` entity shows the current decision rule:
 - **Dynamic electricity tariff optimisation** — integrate with a real-time electricity price sensor (e.g. ENTSO-E, Tibber) to shift heating to low-price windows.
 - **Multi-zone support** — control multiple thermostats with per-zone configuration.
 - **Occupancy / presence setback** — reduce setpoint to minimum when no one is home, using phone presence or PIR sensors.
-- **Push notifications** — alert the user when a rule change occurs, optionally with energy savings estimate.
+- **Energy savings estimate in notifications** — include estimated kWh/€ saved in push notifications.
 
 ---
 

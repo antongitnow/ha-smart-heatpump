@@ -81,6 +81,16 @@ entities:
     name: Solar confirmation delay
 
   # --------------------------------------------------------------------------
+  # Notifications
+  # --------------------------------------------------------------------------
+
+  - type: section
+    label: Notifications
+
+  - entity: input_boolean.shp_notifications_enabled
+    name: Push notifications on rule change
+
+  # --------------------------------------------------------------------------
   # Forecast & timing
   # --------------------------------------------------------------------------
 
