@@ -101,7 +101,7 @@ smart_heatpump:
 | HA notification bell | `persistent_notification` | Built-in, no setup needed |
 | Notify group | `group_family` | [Notify groups](https://www.home-assistant.io/integrations/group/#notify-groups) for multiple devices |
 
-Notifications are only sent when the active rule *changes* (e.g. `default` → `preheat`), not every evaluation cycle. A dashboard toggle (`input_boolean.shp_notifications_enabled`) lets you mute/unmute without editing YAML.
+A notification is sent every time the controller changes the thermostat setpoint — not every evaluation cycle, only when the temperature actually changes. A dashboard toggle (`input_boolean.shp_notifications_enabled`) lets you mute/unmute without editing YAML.
 
 **Example notification:**
 
@@ -109,7 +109,7 @@ Notifications are only sent when the active rule *changes* (e.g. `default` → `
 >
 > 🔥 Cold period coming — pre-heating while COP is still efficient
 >
-> Setpoint: 21.5°C · Outdoor: 6.2°C · Solar export: 0W · Previous mode: default
+> Setpoint: 21.0°C → 21.5°C · Outdoor: 6.2°C · Solar export: 0W · Rule: preheat
 
 ### Step 4 — How to find your entity names
 
