@@ -171,8 +171,6 @@ class SmartHeatpump(hass.Hass):
         """Called by AppDaemon on application startup."""
         # Stateful solar confirmation tracker (FR-02)
         self._solar_surplus_since: datetime | None = None
-        # Track previous rule for change-based notifications
-        self._previous_rule: str | None = None
         self.log("SmartHeatpump initialising", level="INFO")
         # Schedule first evaluation immediately; subsequent runs self-reschedule
         self.run_in(self._run_evaluation, 0)
@@ -277,16 +275,15 @@ class SmartHeatpump(hass.Hass):
         # --- Write active rule to dashboard entity (FR-10) ---
         self._write_active_rule(rule)
 
-        # --- Send notification on rule change ---
-        if rule != self._previous_rule and self._previous_rule is not None:
-            self._send_rule_change_notification(
-                old_rule=self._previous_rule,
-                new_rule=rule,
-                target=target,
+        # --- Send notification on setpoint change ---
+        if current_setpoint is None or abs(target - current_setpoint) >= 0.1:
+            self._send_setpoint_change_notification(
+                old_setpoint=current_setpoint,
+                new_setpoint=target,
+                rule=rule,
                 outdoor_temp_c=outdoor_temp_c,
                 solar_surplus_w=solar_surplus_w,
             )
-        self._previous_rule = rule
 
     # ------------------------------------------------------------------
     # Sensor readers
@@ -474,15 +471,15 @@ class SmartHeatpump(hass.Hass):
     # Notifications
     # ------------------------------------------------------------------
 
-    def _send_rule_change_notification(
+    def _send_setpoint_change_notification(
         self,
-        old_rule: str,
-        new_rule: str,
-        target: float,
+        old_setpoint: float | None,
+        new_setpoint: float,
+        rule: str,
         outdoor_temp_c: float | None,
         solar_surplus_w: float | None,
     ) -> None:
-        """Send a push notification when the active rule changes.
+        """Send a push notification when the thermostat setpoint changes.
 
         Only sends if:
         - input_boolean.shp_notifications_enabled is on (or unavailable → default on)
@@ -505,18 +502,19 @@ class SmartHeatpump(hass.Hass):
             return
 
         # Build human-readable message
-        description = _RULE_DESCRIPTIONS.get(new_rule, new_rule)
+        description = _RULE_DESCRIPTIONS.get(rule, rule)
         outdoor_str = f"{outdoor_temp_c:.1f}°C" if outdoor_temp_c is not None else "N/A"
         surplus_str = f"{solar_surplus_w:.0f}W" if solar_surplus_w is not None else "N/A"
+        old_str = f"{old_setpoint:.1f}°C" if old_setpoint is not None else "N/A"
 
         title = "🏠 Smart Heatpump"
         message = (
             f"{description}\n"
             f"\n"
-            f"Setpoint: {target:.1f}°C\n"
+            f"Setpoint: {old_str} → {new_setpoint:.1f}°C\n"
             f"Outdoor: {outdoor_str}\n"
             f"Solar export: {surplus_str}\n"
-            f"Previous mode: {old_rule}"
+            f"Rule: {rule}"
         )
 
         for target_name in targets:
@@ -527,7 +525,7 @@ class SmartHeatpump(hass.Hass):
                     message=message,
                 )
                 self.log(
-                    f"Notification sent to '{target_name}': {old_rule} → {new_rule}",
+                    f"Notification sent to '{target_name}': setpoint {old_str} → {new_setpoint:.1f}°C ({rule})",
                     level="INFO",
                 )
             except Exception as exc:  # noqa: BLE001
