@@ -38,7 +38,7 @@ sys.modules.setdefault("appdaemon.plugins.hass", _hass_plugin)
 sys.modules.setdefault("appdaemon.plugins.hass.hassapi", _hassapi)
 
 # Now import the pure decision function.
-_app_path = Path(__file__).parent.parent / "appdaemon" / "apps" / "smart_heatpump"
+_app_path = Path(__file__).parent.parent / "apps" / "smart_heatpump"
 sys.path.insert(0, str(_app_path))
 
 from smart_heatpump import decide  # noqa: E402

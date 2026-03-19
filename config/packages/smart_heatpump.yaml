@@ -147,3 +147,14 @@ input_text:
     initial: "initialising"
     max: 30
     icon: mdi:information-outline
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+
+input_boolean:
+
+  shp_notifications_enabled:
+    name: "SHP — Notifications enabled"
+    initial: true
+    icon: mdi:bell-outline

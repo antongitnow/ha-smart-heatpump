@@ -43,6 +43,27 @@ smart_heatpump:
   forecast_solar_entity: null
 
   # -------------------------------------------------------------------------
+  # NOTIFICATIONS (optional)
+  # -------------------------------------------------------------------------
+  # Send a push notification when the active rule changes (e.g. default → preheat).
+  # List one or more HA notify service targets. Each entry is the service name
+  # WITHOUT the "notify." prefix.
+  #
+  # Examples:
+  #   - mobile_app_antons_iphone      → HA Companion App push notification
+  #   - telegram                      → Telegram Bot integration
+  #   - persistent_notification       → HA UI notification bell
+  #   - group_family                  → HA notify group (reaches multiple devices)
+  #
+  # Set to an empty list [] or remove entirely to disable notifications.
+  # You can also toggle notifications on/off from the dashboard without
+  # editing this file (input_boolean.shp_notifications_enabled).
+
+  notify_targets:
+    # - mobile_app_antons_iphone
+    # - telegram
+
+  # -------------------------------------------------------------------------
   # All numeric parameters are controlled via input_number helpers in the HA UI.
   # See config/packages/smart_heatpump.yaml for helper definitions.
   # No numeric values need to be changed here.
