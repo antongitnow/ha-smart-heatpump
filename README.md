@@ -45,26 +45,27 @@ Floor heating systems respond slowly — typically 2–4 hours between a setpoin
 2. Search for **AppDaemon** and install it.
 3. Start the add-on and enable **Start on boot**.
 
-### Step 2 — Copy app files to AppDaemon
+### Step 2 — Install via HACS (recommended)
 
-Copy the contents of `appdaemon/apps/smart_heatpump/` to your AppDaemon apps directory. The default path is:
+1. Open HACS in Home Assistant.
+2. Click the **⋮** menu (top right) → **Custom repositories**.
+3. Paste `https://github.com/antongitnow/ha-smart-heatpump` and select category **AppDaemon**.
+4. Click **Add**, then find **Smart Heatpump Controller** in the HACS store and click **Download**.
 
-```
-/config/appdaemon/apps/smart_heatpump/
-```
+HACS will place the files in `/config/appdaemon/apps/smart_heatpump/` automatically.
 
-You need two files:
-- `smart_heatpump.py` — the controller logic
-- `smart_heatpump.yaml` — the app configuration (you will edit this)
+<details>
+<summary><strong>Manual installation (alternative)</strong></summary>
 
-Via the HA File Editor add-on or SSH:
+Copy the contents of `apps/smart_heatpump/` to your AppDaemon apps directory:
 
 ```bash
-# Example using SSH
 mkdir -p /config/appdaemon/apps/smart_heatpump
 cp smart_heatpump.py /config/appdaemon/apps/smart_heatpump/
 cp smart_heatpump.yaml /config/appdaemon/apps/smart_heatpump/
 ```
+
+</details>
 
 ### Step 3 — Edit `smart_heatpump.yaml` with your entity names
 
