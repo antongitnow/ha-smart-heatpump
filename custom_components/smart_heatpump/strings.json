@@ -30,11 +30,11 @@
       "init": {
         "title": "Smart Heatpump Options",
         "data": {
-          "forecast_solar_entity": "Forecast.Solar entity (optional)",
+          "forecast_solar_entity": "Forecast.Solar — predicted production next hour",
           "notify_targets": "Notification targets"
         },
         "data_description": {
-          "forecast_solar_entity": "Forecast.Solar sensor for predictive solar boost. Leave empty if not installed.",
+          "forecast_solar_entity": "Paste the entity ID of your Forecast.Solar 'next hour' sensor (e.g. sensor.energy_next_hour). This lets the controller pre-heat before solar surplus starts. Leave empty if not installed.",
           "notify_targets": "Comma-separated notify service names without the 'notify.' prefix. Example: mobile_app_my_phone, telegram"
         }
       }
