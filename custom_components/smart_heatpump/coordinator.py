@@ -52,12 +52,16 @@ class SmartHeatpumpCoordinator:
         self._listeners: list[callback] = []
 
         # Dry run — switch entity pushes updates here
-        self.dry_run_enabled: bool = not self.entry.data.get(CONF_THERMOSTAT)
+        self.dry_run_enabled: bool = not self._opt(CONF_THERMOSTAT)
+
+    def _opt(self, key: str, default: str = "") -> str:
+        """Read a config value from options (primary) or data (migration fallback)."""
+        return self.entry.options.get(key, self.entry.data.get(key, default))
 
     @property
     def dry_run(self) -> bool:
         """True when dry run is enabled or no thermostat configured."""
-        return self.dry_run_enabled or not self.entry.data.get(CONF_THERMOSTAT)
+        return self.dry_run_enabled or not self._opt(CONF_THERMOSTAT)
 
     # ------------------------------------------------------------------
     # Listener management — entities register to get notified on changes
@@ -95,13 +99,13 @@ class SmartHeatpumpCoordinator:
     @property
     def forecast_solar_entity(self) -> str | None:
         """Get the forecast solar entity from options."""
-        entity = self.entry.options.get(CONF_FORECAST_SOLAR, "")
+        entity = self._opt(CONF_FORECAST_SOLAR)
         return entity if entity else None
 
     @property
     def notify_targets(self) -> list[str]:
         """Get notification targets from options."""
-        raw = self.entry.options.get(CONF_NOTIFY_TARGETS, "")
+        raw = self._opt(CONF_NOTIFY_TARGETS)
         return [t.strip() for t in raw.split(",") if t.strip()]
 
     # ------------------------------------------------------------------
@@ -258,7 +262,7 @@ class SmartHeatpumpCoordinator:
 
     def _read_outdoor_temp(self) -> float | None:
         """Read outdoor temperature from the weather entity."""
-        entity_id = self.entry.data[CONF_WEATHER]
+        entity_id = self._opt(CONF_WEATHER)
         state = self.hass.states.get(entity_id)
         if state is None or state.state in ("unavailable", "unknown"):
             _LOGGER.warning("Weather entity '%s' unavailable", entity_id)
@@ -276,7 +280,7 @@ class SmartHeatpumpCoordinator:
 
         Positive P1 = importing. Negative P1 = exporting surplus.
         """
-        entity_id = self.entry.data.get(CONF_P1_POWER)
+        entity_id = self._opt(CONF_P1_POWER)
         if not entity_id:
             return None
         state = self.hass.states.get(entity_id)
@@ -290,7 +294,7 @@ class SmartHeatpumpCoordinator:
 
     async def _async_read_forecast_temps(self, horizon_hours: float) -> list[float]:
         """Read hourly forecast temperatures using weather.get_forecasts service."""
-        entity_id = self.entry.data[CONF_WEATHER]
+        entity_id = self._opt(CONF_WEATHER)
         try:
             response = await self.hass.services.async_call(
                 "weather",
@@ -341,7 +345,7 @@ class SmartHeatpumpCoordinator:
 
     def _read_current_setpoint(self) -> float | None:
         """Read current setpoint from the thermostat."""
-        entity_id = self.entry.data.get(CONF_THERMOSTAT)
+        entity_id = self._opt(CONF_THERMOSTAT)
         if not entity_id:
             return None
         state = self.hass.states.get(entity_id)
@@ -362,7 +366,7 @@ class SmartHeatpumpCoordinator:
         when no standalone sensor is configured.
         """
         # Try standalone temperature sensor first
-        temp_entity = self.entry.data.get(CONF_TEMP_SENSOR)
+        temp_entity = self._opt(CONF_TEMP_SENSOR)
         if temp_entity:
             state = self.hass.states.get(temp_entity)
             if state and state.state not in ("unavailable", "unknown"):
@@ -373,7 +377,7 @@ class SmartHeatpumpCoordinator:
             _LOGGER.warning("Temperature sensor '%s' unavailable", temp_entity)
 
         # Fall back to thermostat's current_temperature
-        therm_entity = self.entry.data.get(CONF_THERMOSTAT)
+        therm_entity = self._opt(CONF_THERMOSTAT)
         if therm_entity:
             state = self.hass.states.get(therm_entity)
             if state:
@@ -392,7 +396,7 @@ class SmartHeatpumpCoordinator:
 
     async def _async_set_thermostat(self, target: float) -> None:
         """Set the thermostat to the target temperature."""
-        entity_id = self.entry.data.get(CONF_THERMOSTAT)
+        entity_id = self._opt(CONF_THERMOSTAT)
         if not entity_id:
             return
         try:

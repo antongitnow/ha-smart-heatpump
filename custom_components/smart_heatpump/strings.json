@@ -3,16 +3,12 @@
     "step": {
       "user": {
         "title": "Smart Heatpump Controller",
-        "description": "Select the entities for your heat pump controller.",
+        "description": "Set up your power sensor and weather entity. You can add a thermostat and other settings later via Configure.",
         "data": {
-          "thermostat_entity": "Thermostat (optional)",
-          "temp_sensor_entity": "Indoor temperature sensor (optional)",
           "p1_net_power_entity": "Net grid power sensor (W)",
           "weather_entity": "Weather entity"
         },
         "data_description": {
-          "thermostat_entity": "The climate entity that controls your heat pump. Leave empty for dry run mode (decisions are logged but not applied).",
-          "temp_sensor_entity": "Standalone temperature sensor for indoor readings. If omitted, the thermostat's built-in temperature is used.",
           "p1_net_power_entity": "Smart meter sensor in Watts. Positive = importing, negative = exporting solar.",
           "weather_entity": "Weather entity providing outdoor temperature and forecast. Met.no (weather.home) works out of the box."
         }
@@ -28,16 +24,27 @@
   "options": {
     "step": {
       "init": {
-        "title": "Smart Heatpump Options",
+        "title": "Smart Heatpump Settings",
         "data": {
+          "thermostat_entity": "Thermostat",
+          "temp_sensor_entity": "Indoor temperature sensor",
+          "p1_net_power_entity": "Net grid power sensor (W)",
+          "weather_entity": "Weather entity",
           "forecast_solar_entity": "Forecast.Solar — predicted production next hour",
           "notify_targets": "Notification targets"
         },
         "data_description": {
-          "forecast_solar_entity": "Paste the entity ID of your Forecast.Solar 'next hour' sensor (e.g. sensor.energy_next_hour). This lets the controller pre-heat before solar surplus starts. Leave empty if not installed.",
+          "thermostat_entity": "The climate entity that controls your heat pump. Leave empty for dry run mode.",
+          "temp_sensor_entity": "Standalone temperature sensor. If empty, the thermostat's built-in reading is used.",
+          "p1_net_power_entity": "Smart meter sensor in Watts. Positive = importing, negative = exporting solar.",
+          "weather_entity": "Weather entity providing outdoor temperature and forecast.",
+          "forecast_solar_entity": "Paste the entity ID of your Forecast.Solar 'next hour' sensor (e.g. sensor.energy_next_hour). Leave empty if not installed.",
           "notify_targets": "Comma-separated notify service names without the 'notify.' prefix. Example: mobile_app_my_phone, telegram"
         }
       }
+    },
+    "error": {
+      "entity_not_found": "Entity not found. Check that it exists in Developer Tools → States."
     }
   },
   "entity": {
