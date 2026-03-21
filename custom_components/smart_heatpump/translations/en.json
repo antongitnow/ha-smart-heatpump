@@ -1,0 +1,62 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Smart Heatpump Controller",
+        "description": "Select the entities for your heat pump controller.",
+        "data": {
+          "thermostat_entity": "Thermostat",
+          "p1_net_power_entity": "Net grid power sensor (W)",
+          "weather_entity": "Weather entity"
+        },
+        "data_description": {
+          "thermostat_entity": "The climate entity that controls your thermostat / heat pump.",
+          "p1_net_power_entity": "Smart meter sensor in Watts. Positive = importing, negative = exporting solar.",
+          "weather_entity": "Weather entity providing outdoor temperature and forecast. Met.no (weather.home) works out of the box."
+        }
+      }
+    },
+    "error": {
+      "entity_not_found": "Entity not found. Check that it exists in Developer Tools → States."
+    },
+    "abort": {
+      "already_configured": "Smart Heatpump Controller is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Smart Heatpump Options",
+        "data": {
+          "forecast_solar_entity": "Forecast.Solar entity (optional)",
+          "notify_targets": "Notification targets"
+        },
+        "data_description": {
+          "forecast_solar_entity": "Forecast.Solar sensor for predictive solar boost. Leave empty if not installed.",
+          "notify_targets": "Comma-separated notify service names without the 'notify.' prefix. Example: mobile_app_my_phone, telegram"
+        }
+      }
+    }
+  },
+  "entity": {
+    "number": {
+      "temp_ideal": { "name": "Ideal temperature" },
+      "temp_minimum": { "name": "Minimum temperature" },
+      "temp_solar_boost": { "name": "Solar boost temperature" },
+      "preheat_delta": { "name": "Pre-heat delta" },
+      "cop_threshold_temp": { "name": "COP threshold temperature" },
+      "cop_recovery_horizon_hours": { "name": "COP recovery horizon" },
+      "solar_surplus_threshold": { "name": "Solar surplus threshold" },
+      "solar_confirm_minutes": { "name": "Solar confirmation delay" },
+      "forecast_horizon_hours": { "name": "Forecast horizon" },
+      "thermal_lag_hours": { "name": "Floor heating thermal lag" },
+      "evaluation_interval_min": { "name": "Evaluation interval" }
+    },
+    "sensor": {
+      "active_rule": { "name": "Active rule" }
+    },
+    "switch": {
+      "notifications_enabled": { "name": "Notifications" }
+    }
+  }
+}
