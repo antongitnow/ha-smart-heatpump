@@ -51,10 +51,13 @@ class SmartHeatpumpCoordinator:
         self._cancel_timer: CALLBACK_TYPE | None = None
         self._listeners: list[callback] = []
 
+        # Dry run — switch entity pushes updates here
+        self.dry_run_enabled: bool = not self.entry.data.get(CONF_THERMOSTAT)
+
     @property
     def dry_run(self) -> bool:
-        """True when no thermostat is configured — log decisions but don't actuate."""
-        return not self.entry.data.get(CONF_THERMOSTAT)
+        """True when dry run is enabled or no thermostat configured."""
+        return self.dry_run_enabled or not self.entry.data.get(CONF_THERMOSTAT)
 
     # ------------------------------------------------------------------
     # Listener management — entities register to get notified on changes
