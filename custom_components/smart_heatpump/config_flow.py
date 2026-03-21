@@ -95,19 +95,25 @@ class SmartHeatpumpOptionsFlow(OptionsFlow):
 
         current = self._config_entry.options
 
+        # Use a text selector for Forecast.Solar so it can be left empty.
+        # An EntitySelector requires a valid entity_id and rejects blank input.
+        current_solar = current.get(CONF_FORECAST_SOLAR, "")
+
         data_schema = vol.Schema(
             {
                 vol.Optional(
                     CONF_FORECAST_SOLAR,
-                    default=current.get(CONF_FORECAST_SOLAR, ""),
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain="sensor",
+                    description={"suggested_value": current_solar},
+                ): selector.TextSelector(
+                    selector.TextSelectorConfig(
+                        multiline=False,
                     )
                 ),
                 vol.Optional(
                     CONF_NOTIFY_TARGETS,
-                    default=current.get(CONF_NOTIFY_TARGETS, ""),
+                    description={
+                        "suggested_value": current.get(CONF_NOTIFY_TARGETS, "")
+                    },
                 ): selector.TextSelector(
                     selector.TextSelectorConfig(
                         multiline=False,
