@@ -5,12 +5,14 @@
         "title": "Smart Heatpump Controller",
         "description": "Select the entities for your heat pump controller.",
         "data": {
-          "thermostat_entity": "Thermostat",
+          "thermostat_entity": "Thermostat (optional)",
+          "temp_sensor_entity": "Indoor temperature sensor (optional)",
           "p1_net_power_entity": "Net grid power sensor (W)",
           "weather_entity": "Weather entity"
         },
         "data_description": {
-          "thermostat_entity": "The climate entity that controls your thermostat / heat pump.",
+          "thermostat_entity": "The climate entity that controls your heat pump. Leave empty for dry run mode (decisions are logged but not applied).",
+          "temp_sensor_entity": "Standalone temperature sensor for indoor readings. If omitted, the thermostat's built-in temperature is used.",
           "p1_net_power_entity": "Smart meter sensor in Watts. Positive = importing, negative = exporting solar.",
           "weather_entity": "Weather entity providing outdoor temperature and forecast. Met.no (weather.home) works out of the box."
         }

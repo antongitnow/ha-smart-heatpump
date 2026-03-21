@@ -32,10 +32,18 @@ Your temperature stays within a comfort band you define, without manual interven
 1. Go to **Settings → Devices & services**.
 2. Click **+ Add integration** (bottom right).
 3. Search for **Smart Heatpump Controller**.
-4. Select your **thermostat**, **power sensor**, and **weather entity** from the dropdowns.
+4. Fill in the form:
+   - **Thermostat** — the climate entity for your heat pump. *Leave empty for dry run mode* (see below).
+   - **Indoor temperature sensor** — optional standalone sensor. If omitted, the thermostat's built-in temperature is used.
+   - **Power sensor** — your smart meter / P1 sensor (W).
+   - **Weather entity** — defaults to `weather.home` (Met.no).
 5. Click **Submit**. Done.
 
 That's it. The controller is running. All parameters have sensible defaults and can be adjusted from the dashboard.
+
+### Dry run mode
+
+Leave the thermostat field empty during setup. The controller runs normally — reads sensors, evaluates rules, logs decisions, and sends notifications — but does not touch any thermostat. The **Active rule** sensor shows a `mode: dry_run` attribute and the computed setpoint it *would* have set. Use this to verify behaviour before connecting your heat pump.
 
 ### Step 3 — Add the dashboard card (optional)
 
