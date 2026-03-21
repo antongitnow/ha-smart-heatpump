@@ -59,10 +59,12 @@
       "solar_confirm_minutes": { "name": "Solar confirmation delay" },
       "forecast_horizon_hours": { "name": "Forecast horizon" },
       "thermal_lag_hours": { "name": "Floor heating thermal lag" },
-      "evaluation_interval_min": { "name": "Evaluation interval" }
+      "evaluation_interval_min": { "name": "Evaluation interval" },
+      "indoor_comfort_margin": { "name": "Indoor comfort margin" }
     },
     "sensor": {
-      "active_rule": { "name": "Active rule" }
+      "active_rule": { "name": "Active rule" },
+      "thermal_learning": { "name": "Thermal learning" }
     },
     "switch": {
       "notifications_enabled": { "name": "Notifications" },

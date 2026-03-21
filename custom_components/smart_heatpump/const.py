@@ -29,6 +29,7 @@ DEFAULTS: dict[str, float] = {
     "forecast_horizon_hours": 24.0,
     "thermal_lag_hours": 3.0,
     "evaluation_interval_min": 15.0,
+    "indoor_comfort_margin": 1.0,
 }
 
 # ---------------------------------------------------------------------------
@@ -46,6 +47,7 @@ NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]] = [
     ("forecast_horizon_hours", "Forecast horizon", 1, 48, 1, "h", "mdi:weather-partly-cloudy"),
     ("thermal_lag_hours", "Floor heating thermal lag", 0, 6, 0.5, "h", "mdi:floor-plan"),
     ("evaluation_interval_min", "Evaluation interval", 5, 60, 5, "min", "mdi:refresh"),
+    ("indoor_comfort_margin", "Indoor comfort margin", 0.5, 3.0, 0.5, "°C", "mdi:thermometer-check"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -58,6 +60,7 @@ RULE_DESCRIPTIONS: dict[str, str] = {
     "conserve": "COP poor, no recovery expected — holding minimum temperature",
     "conserve_await_recovery": "COP poor but recovery coming — waiting for efficient window",
     "default": "Normal operation — maintaining ideal temperature",
+    "indoor_buffer_ok": "Indoor temperature sufficient — skipping pre-heat",
     "error_fallback": "Error occurred — using safe fallback temperature",
     "initialising": "Controller starting up",
 }

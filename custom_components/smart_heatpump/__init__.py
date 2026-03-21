@@ -23,6 +23,7 @@ PLATFORMS = [Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Smart Heatpump Controller from a config entry."""
     coordinator = SmartHeatpumpCoordinator(hass, entry)
+    await coordinator.thermal_store.async_load()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     # Create all entities (number sliders, sensor, switch)

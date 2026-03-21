@@ -27,6 +27,8 @@ from .const import (
     RULE_DESCRIPTIONS,
 )
 from .decision import decide
+from .thermal_model import predict_hours_until_below
+from .thermal_store import ThermalStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +45,9 @@ class SmartHeatpumpCoordinator:
 
         # Switch entity pushes updates here
         self.notifications_enabled: bool = True
+
+        # Thermal learning
+        self.thermal_store = ThermalStore(hass, entry.entry_id)
 
         # Evaluation state
         self.active_rule: str = "initialising"
@@ -156,6 +161,7 @@ class SmartHeatpumpCoordinator:
 
         # Read sensors
         outdoor_temp = self._read_outdoor_temp()
+        indoor_temp = self._read_indoor_temp()
         solar_surplus = self._read_solar_surplus()
         forecast_temps = await self._async_read_forecast_temps(effective_horizon)
         forecast_recovery = await self._async_read_forecast_temps(
@@ -163,8 +169,34 @@ class SmartHeatpumpCoordinator:
         )
         forecast_solar = self._read_forecast_solar()
 
-        # Solar confirmation tracking
+        # Record thermal observation for learning
         now_utc = datetime.now(timezone.utc)
+        if indoor_temp is not None and outdoor_temp is not None:
+            heating_active = self._is_heating_active()
+            self.thermal_store.add_observation(
+                timestamp=now_utc.timestamp(),
+                indoor_temp_c=indoor_temp,
+                outdoor_temp_c=outdoor_temp,
+                heating_active=heating_active,
+            )
+            # Save periodically (every evaluation cycle)
+            await self.thermal_store.async_save()
+
+        # Thermal model prediction
+        hours_prediction: float | None = None
+        if (
+            self.thermal_store.loss_coefficient is not None
+            and indoor_temp is not None
+            and forecast_temps
+        ):
+            hours_prediction = predict_hours_until_below(
+                indoor_temp_c=indoor_temp,
+                outdoor_temps=forecast_temps,
+                threshold_temp_c=cfg["temp_minimum"],
+                loss_coefficient_k=self.thermal_store.loss_coefficient,
+            )
+
+        # Solar confirmation tracking
         if (
             solar_surplus is not None
             and solar_surplus >= cfg["solar_surplus_threshold"]
@@ -180,6 +212,7 @@ class SmartHeatpumpCoordinator:
         # Call pure decision function
         target, rule = decide(
             outdoor_temp_c=outdoor_temp,
+            indoor_temp_c=indoor_temp,
             solar_surplus_w=solar_surplus,
             solar_confirmed=solar_confirmed,
             forecast_solar_w=forecast_solar,
@@ -191,6 +224,8 @@ class SmartHeatpumpCoordinator:
             preheat_delta=cfg["preheat_delta"],
             cop_threshold_temp=cfg["cop_threshold_temp"],
             solar_surplus_threshold=cfg["solar_surplus_threshold"],
+            hours_until_below_min=hours_prediction,
+            indoor_comfort_margin=cfg["indoor_comfort_margin"],
         )
 
         # Apply setpoint if changed
@@ -259,6 +294,21 @@ class SmartHeatpumpCoordinator:
     # ------------------------------------------------------------------
     # Sensor readers
     # ------------------------------------------------------------------
+
+    def _is_heating_active(self) -> bool:
+        """Check if the thermostat is currently calling for heat.
+
+        Reads the hvac_action attribute from the climate entity.
+        Returns False if no thermostat configured or attribute unavailable.
+        """
+        entity_id = self._opt(CONF_THERMOSTAT)
+        if not entity_id:
+            return False
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            return False
+        action = state.attributes.get("hvac_action", "")
+        return action == "heating"
 
     def _read_outdoor_temp(self) -> float | None:
         """Read outdoor temperature from the weather entity."""
