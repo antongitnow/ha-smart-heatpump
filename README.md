@@ -29,8 +29,8 @@ Floor heating systems respond slowly — typically 2–4 hours between a setpoin
 ## Prerequisites
 
 - [ ] **Home Assistant** — any recent version (2023.x or later recommended)
-- [ ] **AppDaemon add-on** — available in the HA Add-on Store
-- [ ] **HACS** (optional, for Forecast.Solar) — Home Assistant Community Store
+- [ ] **AppDaemon add-on** — available via **Settings → Apps**
+- [ ] **HACS** (optional, only needed for Forecast.Solar integration)
 - [ ] **A thermostat with a `climate` entity** — any thermostat that supports `climate.set_temperature` (e.g. Honeywell, Nest, ecobee, generic Z-Wave/Zigbee)
 - [ ] **A smart meter / P1 sensor** — any sensor providing net grid power in Watts (positive = import, negative = export). HomeWizard P1, DSMR Reader, Shelly EM, etc.
 - [ ] **Met.no integration** — built into Home Assistant, no API key needed. Provides hourly weather forecast.
@@ -41,31 +41,34 @@ Floor heating systems respond slowly — typically 2–4 hours between a setpoin
 
 ### Step 1 — Install the AppDaemon add-on
 
-1. In Home Assistant, go to **Settings → Add-ons → Add-on Store**.
-2. Search for **AppDaemon** and install it.
+1. In Home Assistant, go to **Settings → Apps**.
+2. Click the **Add-on Store** button (bottom right), search for **AppDaemon** and install it.
 3. Start the add-on and enable **Start on boot**.
 
-### Step 2 — Install via HACS (recommended)
+### Step 2 — Install the app
 
-1. Open HACS in Home Assistant.
-2. Click the **⋮** menu (top right) → **Custom repositories**.
-3. Paste `https://github.com/antongitnow/ha-smart-heatpump` and select category **AppDaemon**.
-4. Click **Add**, then find **Smart Heatpump Controller** in the HACS store and click **Download**.
+> **Note:** HACS 2.0+ no longer supports AppDaemon apps, so installation is done manually.
 
-HACS will place the app files in `/config/appdaemon/apps/smart_heatpump/` automatically. You still need to complete Steps 3–7 below (config, packages, dashboard).
-
-<details>
-<summary><strong>Manual installation (alternative)</strong></summary>
-
-Copy the contents of `apps/smart_heatpump/` to your AppDaemon apps directory:
+**Option A — SSH / Terminal add-on:**
 
 ```bash
-mkdir -p /config/appdaemon/apps/smart_heatpump
-cp smart_heatpump.py /config/appdaemon/apps/smart_heatpump/
-cp smart_heatpump.yaml /config/appdaemon/apps/smart_heatpump/
+cd /config/appdaemon/apps
+mkdir -p smart_heatpump
+cd smart_heatpump
+wget https://raw.githubusercontent.com/antongitnow/ha-smart-heatpump/main/apps/smart_heatpump/smart_heatpump.py
+wget https://raw.githubusercontent.com/antongitnow/ha-smart-heatpump/main/apps/smart_heatpump/smart_heatpump.yaml
 ```
 
-</details>
+**Option B — File editor / Samba:**
+
+1. Download the two files from this repository:
+   - [`smart_heatpump.py`](https://github.com/antongitnow/ha-smart-heatpump/blob/main/apps/smart_heatpump/smart_heatpump.py)
+   - [`smart_heatpump.yaml`](https://github.com/antongitnow/ha-smart-heatpump/blob/main/apps/smart_heatpump/smart_heatpump.yaml)
+2. Place both files in `/config/appdaemon/apps/smart_heatpump/` (create the folder if it doesn't exist).
+
+You also need the packages file for HA helper entities (Step 5) and the dashboard card (Step 7):
+   - [`config/packages/smart_heatpump.yaml`](https://github.com/antongitnow/ha-smart-heatpump/blob/main/config/packages/smart_heatpump.yaml) → copy to `/config/packages/smart_heatpump.yaml`
+   - [`lovelace/dashboard_card.yaml`](https://github.com/antongitnow/ha-smart-heatpump/blob/main/lovelace/dashboard_card.yaml) → used in Step 7
 
 ### Step 3 — Configure `smart_heatpump.yaml`
 
@@ -113,7 +116,7 @@ A notification is sent every time the controller changes the thermostat setpoint
 
 ### Step 4 — How to find your entity names
 
-1. Open Home Assistant → **Developer Tools → States**.
+1. Open Home Assistant → **Settings → Developer tools → States**.
 2. In the search box, type part of the entity name (e.g. `climate` for your thermostat).
 3. Copy the `entity_id` exactly as shown (e.g. `climate.living_room`).
 4. Repeat for your power sensor (e.g. search `power` or `p1`).
@@ -153,9 +156,9 @@ Restart HA to create the helper entities. Then restart AppDaemon (or the AppDaem
 Forecast.Solar provides per-hour solar production predictions based on your panel configuration and local weather. When configured, the controller can pre-heat *before* solar surplus starts (predictive boost).
 
 1. In HACS, search for **Forecast.Solar** and install it.
-2. Go to **Settings → Devices & Services → Add Integration → Forecast.Solar**.
+2. Go to **Settings → Devices & services → Add integration → Forecast.Solar**.
 3. Enter your panel details (azimuth, tilt, peak power in kWp).
-4. After setup, find the entity name: **Developer Tools → States**, search `forecast_solar` or `energy_production`.
+4. After setup, find the entity name: **Settings → Developer tools → States**, search `forecast_solar` or `energy_production`.
    - Typical entity: `sensor.energy_production_next_hour`
 5. Edit `smart_heatpump.yaml` and set:
 
@@ -220,7 +223,7 @@ The `input_text.shp_active_rule` entity shows the current decision rule:
 
 ### Entity not found / "State is unavailable"
 
-- Check your entity names in `smart_heatpump.yaml` match exactly what appears in Developer Tools → States.
+- Check your entity names in `smart_heatpump.yaml` match exactly what appears in **Settings → Developer tools → States**.
 - Verify the integration providing the entity is working (check its own integration page for errors).
 
 ### AppDaemon not starting
@@ -233,12 +236,12 @@ The `input_text.shp_active_rule` entity shows the current decision rule:
 
 - Check `input_text.shp_active_rule` — the rule should be updating every evaluation cycle.
 - If `error_fallback` is shown, check the AppDaemon ERROR log for the exception details.
-- Confirm AppDaemon has write access to the thermostat entity: test manually in Developer Tools → Services → `climate.set_temperature`.
+- Confirm AppDaemon has write access to the thermostat entity: test manually in **Settings → Developer tools → Services** → `climate.set_temperature`.
 - Check that `thermostat_entity` in `smart_heatpump.yaml` matches the climate entity exactly.
 
 ### Solar boost not triggering
 
-- Verify `p1_net_power_entity` returns negative values when you are exporting. Check in Developer Tools → States.
+- Verify `p1_net_power_entity` returns negative values when you are exporting. Check in **Settings → Developer tools → States**.
 - The export must exceed `shp_solar_surplus_threshold` (default 500 W) for `shp_solar_confirm_minutes` (default 10 min) continuously.
 - If using Forecast.Solar, verify the entity name and that its state is a number (not `unavailable`).
 
@@ -246,7 +249,7 @@ The `input_text.shp_active_rule` entity shows the current decision rule:
 
 - The outdoor temperature must be *above* the COP threshold for pre-heat to activate.
 - The forecast minimum within the effective horizon (`forecast_horizon_hours + thermal_lag_hours`) must drop below the COP threshold.
-- Verify `weather.home` has a non-empty `forecast` attribute: Developer Tools → Template → `{{ state_attr('weather.home', 'forecast') }}`.
+- Verify `weather.home` has a non-empty `forecast` attribute: **Settings → Developer tools → Template** → `{{ state_attr('weather.home', 'forecast') }}`.
 
 ---
 
