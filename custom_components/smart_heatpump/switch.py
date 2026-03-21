@@ -10,7 +10,11 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
+import logging
+
 from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -111,6 +115,7 @@ class SmartHeatpumpDryRunSwitch(RestoreEntity, SwitchEntity):
         self._attr_is_on = True
         self._coordinator.dry_run_enabled = True
         self.async_write_ha_state()
+        await self._send_mode_notification("Dry run mode enabled — thermostat will not be touched")
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn off dry run mode."""
@@ -120,3 +125,20 @@ class SmartHeatpumpDryRunSwitch(RestoreEntity, SwitchEntity):
         self._attr_is_on = False
         self._coordinator.dry_run_enabled = False
         self.async_write_ha_state()
+        await self._send_mode_notification("Dry run mode disabled — thermostat control is now active")
+
+    async def _send_mode_notification(self, message: str) -> None:
+        """Send a notification about dry run mode change."""
+        targets = self._coordinator.notify_targets
+        if not targets:
+            return
+        for target_name in targets:
+            try:
+                await self.hass.services.async_call(
+                    "notify",
+                    target_name,
+                    {"title": "Smart Heatpump", "message": message},
+                    blocking=True,
+                )
+            except Exception:
+                _LOGGER.warning("Failed to send dry run notification to '%s'", target_name)
