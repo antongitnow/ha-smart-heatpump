@@ -1,6 +1,8 @@
 """Unit tests for the Smart Heatpump decide() function.
 
-Tests cover all 14 scenarios from PRD Section 11.
+Tests cover all scenarios from PRD Section 11, plus indoor temperature
+and thermal model tests.
+
 No Home Assistant dependency — decide() is a pure Python function.
 
 Run with:
@@ -10,7 +12,6 @@ Run with:
 from __future__ import annotations
 
 import importlib.util
-import sys
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,7 @@ DEFAULTS = dict(
     preheat_delta=0.5,
     cop_threshold_temp=5.0,
     solar_surplus_threshold=500.0,
+    indoor_comfort_margin=1.0,
 )
 
 
@@ -45,11 +47,13 @@ def _decide(**overrides: object) -> tuple[float, str]:
     """Call decide() with defaults, overriding specific kwargs."""
     kwargs = {
         "outdoor_temp_c": 8.0,
+        "indoor_temp_c": None,
         "solar_surplus_w": 0.0,
         "solar_confirmed": False,
         "forecast_solar_w": None,
         "forecast_temps": [],
         "forecast_recovery_temps": [],
+        "hours_until_below_min": None,
         **DEFAULTS,
         **overrides,
     }
@@ -282,3 +286,89 @@ def test_t14_max_recovery_exactly_equals_threshold() -> None:
     )
     assert rule == "conserve_await_recovery"
     assert target == pytest.approx(20.5)
+
+
+# ===========================================================================
+# Indoor temperature and thermal model tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T15 — Indoor buffer + thermal model says safe → skip preheat
+# ---------------------------------------------------------------------------
+
+def test_t15_indoor_buffer_thermal_model_safe() -> None:
+    """Indoor 22°C (1.5 above min), thermal model says 12h buffer,
+    cold arrives at hour 3 → skip preheat."""
+    target, rule = _decide(
+        outdoor_temp_c=6.0,
+        indoor_temp_c=22.0,
+        forecast_temps=[6.0, 5.5, 4.0, 3.0, 2.0],  # cold at index 2
+        hours_until_below_min=12.0,
+    )
+    assert rule == "indoor_buffer_ok"
+    assert target == pytest.approx(21.0)
+
+
+# ---------------------------------------------------------------------------
+# T16 — Indoor too close to minimum → preheat regardless of thermal model
+# ---------------------------------------------------------------------------
+
+def test_t16_indoor_close_to_minimum_still_preheats() -> None:
+    """Indoor 21.0 (only 0.5 above min, below 1.0 margin) → preheat."""
+    target, rule = _decide(
+        outdoor_temp_c=6.0,
+        indoor_temp_c=21.0,
+        forecast_temps=[4.0, 2.0, 1.5],
+        hours_until_below_min=12.0,
+    )
+    assert rule == "preheat"
+    assert target == pytest.approx(21.5)
+
+
+# ---------------------------------------------------------------------------
+# T17 — Indoor buffer OK but thermal model still learning → preheat (conservative)
+# ---------------------------------------------------------------------------
+
+def test_t17_thermal_model_learning_preheats_conservatively() -> None:
+    """Indoor 22°C, but thermal model is None (learning) → preheat."""
+    target, rule = _decide(
+        outdoor_temp_c=6.0,
+        indoor_temp_c=22.0,
+        forecast_temps=[4.0, 2.0, 1.5],
+        hours_until_below_min=None,
+    )
+    assert rule == "preheat"
+    assert target == pytest.approx(21.5)
+
+
+# ---------------------------------------------------------------------------
+# T18 — Indoor buffer OK but thermal model says NOT safe → preheat
+# ---------------------------------------------------------------------------
+
+def test_t18_indoor_buffer_thermal_model_not_safe() -> None:
+    """Indoor 22°C, but thermal model says only 2h buffer, cold at hour 3 → preheat.
+    2h < 3h means we'll drop below min before cold even fully arrives."""
+    target, rule = _decide(
+        outdoor_temp_c=6.0,
+        indoor_temp_c=22.0,
+        forecast_temps=[6.0, 5.5, 4.0, 3.0],  # cold at index 2
+        hours_until_below_min=2.0,
+    )
+    assert rule == "preheat"
+    assert target == pytest.approx(21.5)
+
+
+# ---------------------------------------------------------------------------
+# T19 — Indoor temp unknown → preheat as usual (conservative)
+# ---------------------------------------------------------------------------
+
+def test_t19_indoor_temp_unknown_preheats() -> None:
+    """No indoor temp sensor → preheat (conservative, same as before)."""
+    target, rule = _decide(
+        outdoor_temp_c=6.0,
+        indoor_temp_c=None,
+        forecast_temps=[4.0, 2.0, 1.5],
+        hours_until_below_min=12.0,
+    )
+    assert rule == "preheat"
+    assert target == pytest.approx(21.5)
