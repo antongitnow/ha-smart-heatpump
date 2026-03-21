@@ -58,7 +58,8 @@
       "active_rule": { "name": "Active rule" }
     },
     "switch": {
-      "notifications_enabled": { "name": "Notifications" }
+      "notifications_enabled": { "name": "Notifications" },
+      "dry_run": { "name": "Dry run" }
     }
   }
 }
