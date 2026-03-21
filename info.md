@@ -2,10 +2,10 @@
 
 An intelligent thermostat controller for Home Assistant that optimises heat pump operation based on real-time COP, solar surplus, and weather forecast.
 
-- **Solar boost:** Automatically raises the setpoint when you are exporting solar electricity to the grid, storing free energy as heat in your floor.
-- **COP-aware pre-heating:** Pre-heats your home hours in advance of cold periods while outdoor temperatures — and therefore heat pump efficiency — are still favourable.
-- **Conservation mode:** Reduces heating to the minimum when COP is poor, and waits for the next efficient window before heating again.
-- **Fully local:** All logic runs in AppDaemon. No cloud dependency, no API keys.
-- **Easy configuration:** All parameters are adjustable from the Home Assistant dashboard via sliders — no YAML editing required after installation.
+- **Solar boost:** Stores free solar energy as heat when you're exporting to the grid.
+- **COP-aware pre-heating:** Pre-heats before cold periods while the heat pump is still efficient.
+- **Conservation mode:** Reduces heating when COP is poor and waits for the next efficient window.
+- **Fully local:** No cloud, no API keys, no AppDaemon required.
+- **Easy setup:** Install via HACS, add the integration, pick your entities from a dropdown — done.
 
-Requires AppDaemon, a `climate` entity for your thermostat, and a net power sensor (W) from a smart meter or P1 dongle.
+All parameters are adjustable from the dashboard via sliders. No YAML editing required.

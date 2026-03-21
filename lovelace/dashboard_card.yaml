@@ -3,11 +3,11 @@
 # HOW TO ADD THIS CARD TO YOUR DASHBOARD
 # 1. Open Home Assistant → your dashboard → Edit (pencil icon)
 # 2. Click "+ Add Card" → "Manual" (scroll to bottom)
-# 3. Paste the YAML below (everything after the dashes) into the card editor
+# 3. Paste the YAML below into the card editor
 # 4. Click Save
 #
-# If your thermostat or weather entity names differ from the defaults,
-# update the entity references marked with # <-- UPDATE below.
+# Entity names use the default naming convention from the integration.
+# If you renamed entities in the UI, update the references below.
 
 type: entities
 title: Smart Heatpump Controller
@@ -21,19 +21,8 @@ entities:
   - type: section
     label: Status
 
-  - entity: input_text.shp_active_rule
+  - entity: sensor.smart_heatpump_controller_active_rule
     name: Active rule
-    icon: mdi:information-outline
-
-  - entity: climate.PLACEHOLDER_THERMOSTAT   # <-- UPDATE to your thermostat entity
-    name: Thermostat setpoint
-    attribute: temperature
-    icon: mdi:thermostat
-
-  - entity: weather.home                     # <-- UPDATE if your weather entity differs
-    name: Outdoor temperature
-    attribute: temperature
-    icon: mdi:thermometer
 
   # --------------------------------------------------------------------------
   # Temperature targets
@@ -42,17 +31,17 @@ entities:
   - type: section
     label: Temperature targets
 
-  - entity: input_number.shp_temp_ideal
+  - entity: number.smart_heatpump_controller_ideal_temperature
     name: Ideal temperature
 
-  - entity: input_number.shp_temp_minimum
-    name: Minimum temperature (hard floor)
+  - entity: number.smart_heatpump_controller_minimum_temperature
+    name: Minimum temperature
 
-  - entity: input_number.shp_temp_solar_boost
+  - entity: number.smart_heatpump_controller_solar_boost_temperature
     name: Solar boost temperature
 
-  - entity: input_number.shp_preheat_delta
-    name: Pre-heat delta above ideal
+  - entity: number.smart_heatpump_controller_pre_heat_delta
+    name: Pre-heat delta
 
   # --------------------------------------------------------------------------
   # COP settings
@@ -61,10 +50,10 @@ entities:
   - type: section
     label: COP settings
 
-  - entity: input_number.shp_cop_threshold_temp
+  - entity: number.smart_heatpump_controller_cop_threshold_temperature
     name: COP threshold temperature
 
-  - entity: input_number.shp_cop_recovery_horizon_hours
+  - entity: number.smart_heatpump_controller_cop_recovery_horizon
     name: COP recovery horizon
 
   # --------------------------------------------------------------------------
@@ -74,10 +63,10 @@ entities:
   - type: section
     label: Solar settings
 
-  - entity: input_number.shp_solar_surplus_threshold
+  - entity: number.smart_heatpump_controller_solar_surplus_threshold
     name: Solar surplus threshold
 
-  - entity: input_number.shp_solar_confirm_minutes
+  - entity: number.smart_heatpump_controller_solar_confirmation_delay
     name: Solar confirmation delay
 
   # --------------------------------------------------------------------------
@@ -87,8 +76,8 @@ entities:
   - type: section
     label: Notifications
 
-  - entity: input_boolean.shp_notifications_enabled
-    name: Push notifications on rule change
+  - entity: switch.smart_heatpump_controller_notifications
+    name: Push notifications
 
   # --------------------------------------------------------------------------
   # Forecast & timing
@@ -97,11 +86,11 @@ entities:
   - type: section
     label: Forecast & timing
 
-  - entity: input_number.shp_forecast_horizon_hours
+  - entity: number.smart_heatpump_controller_forecast_horizon
     name: Forecast horizon
 
-  - entity: input_number.shp_thermal_lag_hours
+  - entity: number.smart_heatpump_controller_floor_heating_thermal_lag
     name: Floor heating thermal lag
 
-  - entity: input_number.shp_evaluation_interval_min
+  - entity: number.smart_heatpump_controller_evaluation_interval
     name: Evaluation interval
