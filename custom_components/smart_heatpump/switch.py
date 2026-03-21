@@ -102,7 +102,7 @@ class SmartHeatpumpDryRunSwitch(RestoreEntity, SwitchEntity):
         """Restore previous state on startup."""
         await super().async_added_to_hass()
         # If no thermostat configured, always force dry run on
-        if not self._coordinator.entry.data.get("thermostat_entity"):
+        if not self._coordinator._opt("thermostat_entity"):
             self._attr_is_on = True
         else:
             last = await self.async_get_last_state()
@@ -119,7 +119,7 @@ class SmartHeatpumpDryRunSwitch(RestoreEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn off dry run mode."""
-        if not self._coordinator.entry.data.get("thermostat_entity"):
+        if not self._coordinator._opt("thermostat_entity"):
             # Can't disable dry run without a thermostat
             return
         self._attr_is_on = False
