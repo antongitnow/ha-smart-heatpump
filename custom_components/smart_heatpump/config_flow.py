@@ -14,7 +14,7 @@ from homeassistant.config_entries import (
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-from .const import CONF_FORECAST_SOLAR, CONF_NOTIFY_TARGETS, CONF_P1_POWER, CONF_THERMOSTAT, CONF_WEATHER, DOMAIN
+from .const import CONF_FORECAST_SOLAR, CONF_NOTIFY_TARGETS, CONF_P1_POWER, CONF_TEMP_SENSOR, CONF_THERMOSTAT, CONF_WEATHER, DOMAIN
 
 
 class SmartHeatpumpConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -30,7 +30,7 @@ class SmartHeatpumpConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             # Validate that selected entities exist
-            for key in (CONF_THERMOSTAT, CONF_P1_POWER, CONF_WEATHER):
+            for key in (CONF_THERMOSTAT, CONF_P1_POWER, CONF_WEATHER, CONF_TEMP_SENSOR):
                 entity_id = user_input.get(key)
                 if entity_id and self.hass.states.get(entity_id) is None:
                     errors[key] = "entity_not_found"
@@ -47,8 +47,14 @@ class SmartHeatpumpConfigFlow(ConfigFlow, domain=DOMAIN):
 
         data_schema = vol.Schema(
             {
-                vol.Required(CONF_THERMOSTAT): selector.EntitySelector(
+                vol.Optional(CONF_THERMOSTAT): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="climate")
+                ),
+                vol.Optional(CONF_TEMP_SENSOR): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="temperature",
+                    )
                 ),
                 vol.Required(CONF_P1_POWER): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="sensor")

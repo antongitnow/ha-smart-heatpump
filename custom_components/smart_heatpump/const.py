@@ -8,6 +8,7 @@ DOMAIN = "smart_heatpump"
 CONF_THERMOSTAT = "thermostat_entity"
 CONF_P1_POWER = "p1_net_power_entity"
 CONF_WEATHER = "weather_entity"
+CONF_TEMP_SENSOR = "temp_sensor_entity"
 
 # Options entry keys (set via Configure button)
 CONF_FORECAST_SOLAR = "forecast_solar_entity"

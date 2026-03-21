@@ -19,6 +19,7 @@ from .const import (
     CONF_FORECAST_SOLAR,
     CONF_NOTIFY_TARGETS,
     CONF_P1_POWER,
+    CONF_TEMP_SENSOR,
     CONF_THERMOSTAT,
     CONF_WEATHER,
     DEFAULTS,
@@ -45,9 +46,15 @@ class SmartHeatpumpCoordinator:
 
         # Evaluation state
         self.active_rule: str = "initialising"
+        self.last_target: float | None = None  # Track computed setpoint (for dry run)
         self._solar_surplus_since: datetime | None = None
         self._cancel_timer: CALLBACK_TYPE | None = None
         self._listeners: list[callback] = []
+
+    @property
+    def dry_run(self) -> bool:
+        """True when no thermostat is configured — log decisions but don't actuate."""
+        return not self.entry.data.get(CONF_THERMOSTAT)
 
     # ------------------------------------------------------------------
     # Listener management — entities register to get notified on changes
@@ -180,36 +187,65 @@ class SmartHeatpumpCoordinator:
         )
 
         # Apply setpoint if changed
-        current_setpoint = self._read_current_setpoint()
-        setpoint_changed = (
-            current_setpoint is None or abs(target - current_setpoint) >= 0.1
-        )
+        if self.dry_run:
+            # Dry run — compare against last computed target instead of thermostat
+            previous = self.last_target
+            setpoint_changed = previous is None or abs(target - previous) >= 0.1
 
-        if setpoint_changed:
-            await self._async_set_thermostat(target)
-            _LOGGER.info(
-                "Setpoint change: %s -> %.1f°C | rule=%s | outdoor=%s°C | surplus=%sW",
-                current_setpoint,
-                target,
-                rule,
-                outdoor_temp,
-                solar_surplus,
-            )
-            await self._async_send_notification(
-                old_setpoint=current_setpoint,
-                new_setpoint=target,
-                rule=rule,
-                outdoor_temp=outdoor_temp,
-                solar_surplus=solar_surplus,
-            )
+            if setpoint_changed:
+                _LOGGER.info(
+                    "DRY RUN — would set: %s -> %.1f°C | rule=%s | outdoor=%s°C | surplus=%sW",
+                    previous,
+                    target,
+                    rule,
+                    outdoor_temp,
+                    solar_surplus,
+                )
+                await self._async_send_notification(
+                    old_setpoint=previous,
+                    new_setpoint=target,
+                    rule=rule,
+                    outdoor_temp=outdoor_temp,
+                    solar_surplus=solar_surplus,
+                )
+            else:
+                _LOGGER.debug(
+                    "DRY RUN — no change: setpoint=%.1f°C | rule=%s",
+                    target,
+                    rule,
+                )
         else:
-            _LOGGER.debug(
-                "No change: setpoint=%.1f°C | rule=%s | outdoor=%s°C",
-                target,
-                rule,
-                outdoor_temp,
+            current_setpoint = self._read_current_setpoint()
+            setpoint_changed = (
+                current_setpoint is None or abs(target - current_setpoint) >= 0.1
             )
 
+            if setpoint_changed:
+                await self._async_set_thermostat(target)
+                _LOGGER.info(
+                    "Setpoint change: %s -> %.1f°C | rule=%s | outdoor=%s°C | surplus=%sW",
+                    current_setpoint,
+                    target,
+                    rule,
+                    outdoor_temp,
+                    solar_surplus,
+                )
+                await self._async_send_notification(
+                    old_setpoint=current_setpoint,
+                    new_setpoint=target,
+                    rule=rule,
+                    outdoor_temp=outdoor_temp,
+                    solar_surplus=solar_surplus,
+                )
+            else:
+                _LOGGER.debug(
+                    "No change: setpoint=%.1f°C | rule=%s | outdoor=%s°C",
+                    target,
+                    rule,
+                    outdoor_temp,
+                )
+
+        self.last_target = target
         self.active_rule = rule
         self._notify_listeners()
 
@@ -302,7 +338,9 @@ class SmartHeatpumpCoordinator:
 
     def _read_current_setpoint(self) -> float | None:
         """Read current setpoint from the thermostat."""
-        entity_id = self.entry.data[CONF_THERMOSTAT]
+        entity_id = self.entry.data.get(CONF_THERMOSTAT)
+        if not entity_id:
+            return None
         state = self.hass.states.get(entity_id)
         if state is None:
             return None
@@ -314,13 +352,46 @@ class SmartHeatpumpCoordinator:
         except (TypeError, ValueError):
             return None
 
+    def _read_indoor_temp(self) -> float | None:
+        """Read indoor temperature from the optional temp sensor.
+
+        Falls back to the thermostat's current_temperature attribute
+        when no standalone sensor is configured.
+        """
+        # Try standalone temperature sensor first
+        temp_entity = self.entry.data.get(CONF_TEMP_SENSOR)
+        if temp_entity:
+            state = self.hass.states.get(temp_entity)
+            if state and state.state not in ("unavailable", "unknown"):
+                try:
+                    return float(state.state)
+                except (TypeError, ValueError):
+                    pass
+            _LOGGER.warning("Temperature sensor '%s' unavailable", temp_entity)
+
+        # Fall back to thermostat's current_temperature
+        therm_entity = self.entry.data.get(CONF_THERMOSTAT)
+        if therm_entity:
+            state = self.hass.states.get(therm_entity)
+            if state:
+                temp = state.attributes.get("current_temperature")
+                if temp is not None:
+                    try:
+                        return float(temp)
+                    except (TypeError, ValueError):
+                        pass
+
+        return None
+
     # ------------------------------------------------------------------
     # Actuators
     # ------------------------------------------------------------------
 
     async def _async_set_thermostat(self, target: float) -> None:
         """Set the thermostat to the target temperature."""
-        entity_id = self.entry.data[CONF_THERMOSTAT]
+        entity_id = self.entry.data.get(CONF_THERMOSTAT)
+        if not entity_id:
+            return
         try:
             await self.hass.services.async_call(
                 "climate",
@@ -374,9 +445,10 @@ class SmartHeatpumpCoordinator:
 
     async def _async_safe_fallback(self) -> None:
         """Safe fallback on unhandled exception."""
-        try:
-            await self._async_set_thermostat(DEFAULTS["temp_ideal"])
-        except Exception:
-            pass
+        if not self.dry_run:
+            try:
+                await self._async_set_thermostat(DEFAULTS["temp_ideal"])
+            except Exception:
+                pass
         self.active_rule = "error_fallback"
         self._notify_listeners()

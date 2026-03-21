@@ -48,10 +48,16 @@ class SmartHeatpumpRuleSensor(SensorEntity):
         return self._coordinator.active_rule
 
     @property
-    def extra_state_attributes(self) -> dict[str, str]:
-        """Return the human-readable description as an attribute."""
+    def extra_state_attributes(self) -> dict[str, str | float | None]:
+        """Return the human-readable description and mode as attributes."""
         rule = self._coordinator.active_rule
-        return {"description": RULE_DESCRIPTIONS.get(rule, rule)}
+        attrs: dict[str, str | float | None] = {
+            "description": RULE_DESCRIPTIONS.get(rule, rule),
+        }
+        if self._coordinator.dry_run:
+            attrs["mode"] = "dry_run"
+            attrs["computed_setpoint"] = self._coordinator.last_target
+        return attrs
 
     async def async_added_to_hass(self) -> None:
         """Register for coordinator updates."""
