@@ -46,14 +46,6 @@ flowchart TD
     RECOVERY -- Yes --> AWAIT["❄️ conserve_await_recovery<br/>Setpoint → minimum temp"]
     RECOVERY -- No --> CONSERVE["🧊 conserve<br/>Setpoint → minimum temp"]
 
-    style BOOST fill:#f6e05e
-    style PREDICTED fill:#fbd38d
-    style PREHEAT fill:#fc8181
-    style SKIP fill:#9ae6b4
-    style CONSERVE fill:#90cdf4
-    style AWAIT fill:#90cdf4
-    style DEFAULT1 fill:#e2e8f0
-    style DEFAULT2 fill:#e2e8f0
 ```
 
 ### What is COP and why it matters
