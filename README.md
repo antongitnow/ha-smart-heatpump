@@ -28,26 +28,21 @@ Rules are evaluated top-to-bottom. The first match wins.
 ```mermaid
 flowchart TD
     START([Every 15 min]) --> SOLAR{Solar surplus<br/>or predicted?}
-    SOLAR -- "Yes, confirmed" --> BOOST["☀️ solar_boost<br/>Setpoint → solar boost temp"]
-    SOLAR -- "Yes, predicted" --> PREDICTED["🌤️ solar_predicted<br/>Setpoint → solar boost temp"]
+    SOLAR -- "Yes, confirmed" --> BOOST["solar_boost<br/>Setpoint → solar boost temp"]
+    SOLAR -- "Yes, predicted" --> PREDICTED["solar_predicted<br/>Setpoint → solar boost temp"]
     SOLAR -- No --> OUTDOOR{Outdoor temp<br/>known?}
-    OUTDOOR -- No --> DEFAULT1["🏠 default<br/>Setpoint → ideal temp"]
+    OUTDOOR -- No --> DEFAULT1["default<br/>Setpoint → ideal temp"]
     OUTDOOR -- Yes --> FORECAST{Cold period<br/>coming?}
     FORECAST -- No --> COPNOW{COP poor<br/>right now?}
     FORECAST -- Yes --> COPGOOD{COP still<br/>good now?}
     COPGOOD -- No --> COPNOW
-    COPGOOD -- Yes --> BUFFER{Indoor temp<br/>has buffer?}
-    COPGOOD -- Yes --> IDEALCHECK{Will indoor temp<br/>stay above ideal<br/>through forecast?}
-    IDEALCHECK -- "Yes (thermal model)" --> SKIP["✅ indoor_buffer_ok<br/>Setpoint → ideal temp"]
-    IDEALCHECK -- "No / unknown" --> BUFFER{Indoor temp<br/>has buffer?}
-    BUFFER -- "No / unknown" --> PREHEAT["🔥 preheat<br/>Setpoint → ideal + delta"]
-    BUFFER -- "Yes + thermal model" --> PREDICT{Will indoor temp<br/>stay above minimum<br/>through cold period?}
-    PREDICT -- No --> PREHEAT
-    PREDICT -- Yes --> SKIP
-    COPNOW -- No --> DEFAULT2["🏠 default<br/>Setpoint → ideal temp"]
+    COPGOOD -- Yes --> IDEALCHECK{Thermal model:<br/>will indoor stay<br/>above ideal temp?}
+    IDEALCHECK -- Yes --> SKIP["indoor_buffer_ok<br/>Setpoint → ideal temp"]
+    IDEALCHECK -- "No / unknown" --> PREHEAT["preheat<br/>Setpoint → ideal + delta"]
+    COPNOW -- No --> DEFAULT2["default<br/>Setpoint → ideal temp"]
     COPNOW -- Yes --> RECOVERY{Recovery<br/>expected?}
-    RECOVERY -- Yes --> AWAIT["❄️ conserve_await_recovery<br/>Setpoint → minimum temp"]
-    RECOVERY -- No --> CONSERVE["🧊 conserve<br/>Setpoint → minimum temp"]
+    RECOVERY -- Yes --> AWAIT["conserve_await_recovery<br/>Setpoint → minimum temp"]
+    RECOVERY -- No --> CONSERVE["conserve<br/>Setpoint → minimum temp"]
 
 ```
 
@@ -90,7 +85,7 @@ flowchart LR
         direction TB
         CURRENT["Current indoor temp"]
         FORECAST2["Weather forecast"]
-        MODEL["Thermal model:<br/>hours until minimum"]
+        MODEL["Thermal model:<br/>hours until below ideal"]
         DECIDE["Skip or pre-heat?"]
         CURRENT --> MODEL
         FORECAST2 --> MODEL
@@ -106,9 +101,9 @@ flowchart LR
 - A well-insulated home might lose 0.3°C/hour at ΔT = 15°C. A poorly insulated home might lose 1.0°C/hour.
 
 **Phase 2 — Predicting:**
-- Given the current indoor temperature and the weather forecast, the model predicts **how many hours until indoor temperature drops below the minimum**.
-- If that's longer than the cold period, it skips pre-heating entirely.
-- If the model predicts the home will get too cold, it pre-heats as normal.
+- Given the current indoor temperature and the weather forecast, the model predicts **how many hours until indoor temperature drops below the ideal temperature**.
+- If that's longer than the entire forecast window, it skips pre-heating entirely — the house simply won't cool down enough to need it.
+- If the model predicts the indoor temperature will drop below ideal, it pre-heats as normal.
 
 **During learning:** the controller behaves conservatively (always pre-heats). Once enough data is collected, it becomes smarter and avoids unnecessary heating — especially in well-insulated homes.
 
@@ -128,11 +123,10 @@ In practice this means the model primarily learns from **nighttime cool-downs** 
 
 ### Indoor temperature awareness
 
-The controller uses indoor temperature in three ways:
+The controller uses indoor temperature in two ways:
 
-1. **Ideal temp check** — if the thermal model predicts indoor temperature will stay above the ideal temperature (e.g. 21°C) through the entire forecast window, pre-heating is skipped entirely. This handles cases where it stays warm enough outside that the house simply won't cool down.
-2. **Buffer check** — if indoor temperature is more than 1°C above the minimum, the home has thermal buffer. Combined with the thermal model, this can skip pre-heating even when a cold period is coming.
-3. **Setpoint floor** — the setpoint never goes below `temp_minimum`, regardless of which rule is active.
+1. **Ideal temp check** — if the thermal model predicts indoor temperature will stay above the ideal temperature (e.g. 21°C) through the entire forecast window, pre-heating is skipped entirely. This handles cases where the house simply won't cool down enough — for example because it stays mild outside, or because the home is very well insulated.
+2. **Setpoint floor** — the setpoint never goes below `temp_minimum`, regardless of which rule is active.
 
 ### Real-world scenarios
 
@@ -143,7 +137,7 @@ The controller uses indoor temperature in three ways:
 > It's above the COP threshold now (COP ≈ 3.5), but tonight it won't be. The thermal model predicts your well-insulated home will stay above 21°C for the entire forecast window. `indoor_buffer_ok` — the house won't cool down enough to need pre-heating.
 
 **Scenario 3 — Same forecast, but poorly insulated home**
-> Same weather, but the thermal model predicts only 3 hours of buffer. Cold arrives in 4 hours. `preheat` activates — setpoint rises to 21.5°C while the heat pump is still efficient (COP ≈ 3.5 vs. COP ≈ 1.8 at −2°C).
+> Same weather, but the thermal model predicts indoor temperature will drop below 21°C within 4 hours. `preheat` activates — setpoint rises to 21.5°C while the heat pump is still efficient (COP ≈ 3.5 vs. COP ≈ 1.8 at −2°C).
 
 **Scenario 4 — Cold snap (−3°C, no recovery in 6 hours)**
 > COP is poor (~1.8). Forecast shows no improvement within 6 hours. `conserve` — setpoint drops to 20.5°C minimum. The controller waits rather than running the heat pump inefficiently.
@@ -231,6 +225,7 @@ Use the **Notifications** switch on the device or dashboard to mute/unmute witho
 > Cold period coming — pre-heating while COP is still efficient
 >
 > Setpoint: 21.0°C → 21.5°C
+> Indoor: 21.2°C
 > Outdoor: 6.2°C
 > Solar export: 0W
 > Rule: preheat
@@ -257,7 +252,7 @@ The **Active rule** sensor shows the controller's current decision:
 | `solar_boost` | Confirmed solar export — storing free energy as heat |
 | `solar_predicted` | Predicted solar export — pre-heating before surplus starts |
 | `preheat` | Cold period coming — pre-heating while COP is still efficient |
-| `indoor_buffer_ok` | Cold coming, but home has enough thermal buffer — skipping pre-heat |
+| `indoor_buffer_ok` | Indoor temp will stay above ideal through forecast — skipping pre-heat |
 | `conserve` | COP poor, no recovery expected — holding minimum temperature |
 | `conserve_await_recovery` | COP poor, but recovery coming — waiting for efficient window |
 | `default` | Normal operation — maintaining ideal temperature |
