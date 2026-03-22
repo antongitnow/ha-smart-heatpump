@@ -25,6 +25,7 @@ class ThermalObservation:
     indoor_temp_c: float
     outdoor_temp_c: float
     heating_active: bool  # True if thermostat was calling for heat
+    solar_gain_likely: bool = False  # True when sun may be warming the house
 
 
 # Minimum indoor-outdoor delta to avoid numerical instability in ln()
@@ -42,6 +43,8 @@ def compute_loss_coefficient(
 
     Only uses observation pairs where:
     - Heating was not active (both points)
+    - No solar gain likely (both points) — avoids learning from
+      passive solar warming which inflates insulation estimates
     - Indoor temp was falling or flat
     - Indoor-outdoor delta was large enough for stable ln()
 
@@ -55,6 +58,12 @@ def compute_loss_coefficient(
 
         # Only use cooling periods (heating off)
         if prev.heating_active or curr.heating_active:
+            continue
+
+        # Exclude periods with likely solar gain — passive solar warming
+        # produces artificially low heat loss estimates that cause the model
+        # to skip pre-heating when it shouldn't.
+        if prev.solar_gain_likely or curr.solar_gain_likely:
             continue
 
         # Only use periods where indoor temp is falling or flat

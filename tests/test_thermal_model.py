@@ -40,6 +40,7 @@ def _make_cooling_observations(
     outdoor: float,
     interval_min: int = 15,
     count: int = 50,
+    solar_gain_likely: bool = False,
 ) -> list[ThermalObservation]:
     """Generate synthetic cooling observations for a known k."""
     obs = []
@@ -51,6 +52,7 @@ def _make_cooling_observations(
             indoor_temp_c=t_indoor,
             outdoor_temp_c=outdoor,
             heating_active=False,
+            solar_gain_likely=solar_gain_likely,
         ))
         # Apply Newton's cooling for one interval
         dt_h = interval_min / 60.0
@@ -176,3 +178,58 @@ def test_predict_with_varying_outdoor() -> None:
     # 22 - 20.5 = 1.5°C buffer at 0°C → should take ~3 hours
     assert hours > 1.0
     assert hours < 10.0
+
+
+# ---------------------------------------------------------------------------
+# Solar gain filtering tests
+# ---------------------------------------------------------------------------
+
+def test_compute_k_excludes_solar_gain_observations() -> None:
+    """Observations with solar_gain_likely=True should be excluded from k calculation."""
+    obs = _make_cooling_observations(
+        k=0.05, indoor_start=22.0, outdoor=5.0, count=50, solar_gain_likely=True,
+    )
+    # All observations have solar gain → no valid pairs → None
+    k = compute_loss_coefficient(obs, min_samples=10)
+    assert k is None
+
+
+def test_compute_k_mixed_solar_and_night() -> None:
+    """Mix of solar gain (daytime) and clean (nighttime) observations.
+    Only nighttime observations should contribute to k."""
+    # Nighttime observations with known k=0.05
+    night_obs = _make_cooling_observations(
+        k=0.05, indoor_start=22.0, outdoor=5.0, count=50, solar_gain_likely=False,
+    )
+    # Daytime observations with artificially low apparent k (solar warming)
+    # These simulate the sun warming the house — temp drops slowly (low apparent k)
+    day_obs = _make_cooling_observations(
+        k=0.01, indoor_start=22.0, outdoor=5.0, count=50, solar_gain_likely=True,
+    )
+    # Shift day timestamps so they don't overlap
+    for o in day_obs:
+        o.timestamp += 100_000
+
+    combined = night_obs + day_obs
+    k = compute_loss_coefficient(combined, min_samples=10)
+    assert k is not None
+    # k should reflect the nighttime-only value (~0.05), not the solar-contaminated ~0.01
+    assert k == pytest.approx(0.05, abs=0.005)
+
+
+def test_compute_k_partial_solar_pair_excluded() -> None:
+    """If only one observation in a pair has solar gain, the pair is excluded."""
+    obs = _make_cooling_observations(
+        k=0.05, indoor_start=22.0, outdoor=5.0, count=50, solar_gain_likely=False,
+    )
+    # Mark every other observation as solar gain → all pairs include at least one solar
+    for i in range(0, 50, 2):
+        obs[i] = ThermalObservation(
+            timestamp=obs[i].timestamp,
+            indoor_temp_c=obs[i].indoor_temp_c,
+            outdoor_temp_c=obs[i].outdoor_temp_c,
+            heating_active=False,
+            solar_gain_likely=True,
+        )
+    k = compute_loss_coefficient(obs, min_samples=24)
+    assert k is None
