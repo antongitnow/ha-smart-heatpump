@@ -17,6 +17,146 @@ Your temperature stays within a comfort band you define, without manual interven
 
 ---
 
+## How it works
+
+The controller combines three inputs — **solar production**, **weather forecast**, and **indoor temperature** — to pick the most energy-efficient setpoint every evaluation cycle (default: 15 minutes).
+
+### Decision tree
+
+Rules are evaluated top-to-bottom. The first match wins.
+
+```mermaid
+flowchart TD
+    START([Every 15 min]) --> SOLAR{Solar surplus<br/>or predicted?}
+    SOLAR -- "Yes, confirmed" --> BOOST["☀️ solar_boost<br/>Setpoint → solar boost temp"]
+    SOLAR -- "Yes, predicted" --> PREDICTED["🌤️ solar_predicted<br/>Setpoint → solar boost temp"]
+    SOLAR -- No --> OUTDOOR{Outdoor temp<br/>known?}
+    OUTDOOR -- No --> DEFAULT1["🏠 default<br/>Setpoint → ideal temp"]
+    OUTDOOR -- Yes --> FORECAST{Cold period<br/>coming?}
+    FORECAST -- No --> COPNOW{COP poor<br/>right now?}
+    FORECAST -- Yes --> COPGOOD{COP still<br/>good now?}
+    COPGOOD -- No --> COPNOW
+    COPGOOD -- Yes --> BUFFER{Indoor temp<br/>has buffer?}
+    BUFFER -- "No / unknown" --> PREHEAT["🔥 preheat<br/>Setpoint → ideal + delta"]
+    BUFFER -- "Yes + thermal model" --> PREDICT{Will indoor temp<br/>stay above minimum<br/>through cold period?}
+    PREDICT -- No --> PREHEAT
+    PREDICT -- Yes --> SKIP["✅ indoor_buffer_ok<br/>Setpoint → ideal temp"]
+    COPNOW -- No --> DEFAULT2["🏠 default<br/>Setpoint → ideal temp"]
+    COPNOW -- Yes --> RECOVERY{Recovery<br/>expected?}
+    RECOVERY -- Yes --> AWAIT["❄️ conserve_await_recovery<br/>Setpoint → minimum temp"]
+    RECOVERY -- No --> CONSERVE["🧊 conserve<br/>Setpoint → minimum temp"]
+
+    style BOOST fill:#f6e05e
+    style PREDICTED fill:#fbd38d
+    style PREHEAT fill:#fc8181
+    style SKIP fill:#9ae6b4
+    style CONSERVE fill:#90cdf4
+    style AWAIT fill:#90cdf4
+    style DEFAULT1 fill:#e2e8f0
+    style DEFAULT2 fill:#e2e8f0
+```
+
+### What is COP and why it matters
+
+**COP** (Coefficient of Performance) measures how efficiently a heat pump converts electricity into heat. At 10°C outside, a typical heat pump produces ~4 kWh of heat per 1 kWh of electricity (COP = 4). At −5°C, that drops to ~2 (COP = 2). Below a certain outdoor temperature, running the heat pump costs nearly as much as a direct electric heater.
+
+The **COP threshold** (default 5°C) is the point where your heat pump's efficiency drops enough that it's smarter to wait for warmer weather. The controller uses this to decide when to conserve versus pre-heat.
+
+### How forecasting works
+
+The controller uses your Home Assistant weather entity (default: Met.no via `weather.home`) to look ahead:
+
+1. **Effective forecast horizon** = forecast horizon + floor heating thermal lag. With defaults (24h + 3h = 27h), the controller looks 27 hours ahead.
+2. It checks if outdoor temperature will drop **below** the COP threshold within this window.
+3. If yes, and it's currently warm enough for efficient operation, it **pre-heats** — storing energy in your floor while the heat pump is still efficient.
+4. If outdoor temperature is already below the COP threshold, it checks the **COP recovery horizon** (default 6h) to see if warmer weather is coming.
+
+When **Forecast.Solar** is configured, the controller also checks predicted solar production. If significant solar is expected within the next hour, it starts heating early to absorb that free energy — even before actual export begins.
+
+### Thermal learning system
+
+Without thermal data, the controller pre-heats conservatively — any forecast cold period triggers pre-heating. For a well-insulated home, this is often unnecessary.
+
+The thermal learning system fixes this by learning how fast your home cools down:
+
+```mermaid
+flowchart LR
+    subgraph Phase 1 — Learning
+        direction TB
+        OBSERVE["Observe indoor temp<br/>every 15 min"]
+        FILTER["Filter: exclude heating<br/>and solar gain periods"]
+        COOLDOWN["Detect clean cool-down<br/>periods (night only)"]
+        RATE["Calculate heat loss rate<br/>(°C/hour at given ΔT)"]
+        STORE["Store observations<br/>over 3–7 days"]
+        OBSERVE --> FILTER --> COOLDOWN --> RATE --> STORE
+    end
+
+    subgraph Phase 2 — Predicting
+        direction TB
+        CURRENT["Current indoor temp"]
+        FORECAST2["Weather forecast"]
+        MODEL["Thermal model:<br/>hours until minimum"]
+        DECIDE["Skip or pre-heat?"]
+        CURRENT --> MODEL
+        FORECAST2 --> MODEL
+        MODEL --> DECIDE
+    end
+
+    STORE --> MODEL
+```
+
+**Phase 1 — Learning (first 3–7 days):**
+- The controller watches indoor temperature trends during periods when heating is off.
+- It calculates the **heat loss coefficient** — how many °C per hour your home loses at a given indoor-outdoor temperature difference.
+- A well-insulated home might lose 0.3°C/hour at ΔT = 15°C. A poorly insulated home might lose 1.0°C/hour.
+
+**Phase 2 — Predicting:**
+- Given the current indoor temperature and the weather forecast, the model predicts **how many hours until indoor temperature drops below the minimum**.
+- If that's longer than the cold period, it skips pre-heating entirely.
+- If the model predicts the home will get too cold, it pre-heats as normal.
+
+**During learning:** the controller behaves conservatively (always pre-heats). Once enough data is collected, it becomes smarter and avoids unnecessary heating — especially in well-insulated homes.
+
+### Solar gain filtering
+
+Passive solar gain — sunlight warming your house through windows — can mislead the thermal model. On a sunny winter day, indoor temperature drops slowly even with heating off. The model would conclude "this home is very well insulated" and later skip pre-heating. But that warmth was shallow (heated air and furniture, not the floor mass) and disappears quickly after sunset.
+
+To prevent this, the learning system **excludes observations where solar gain is likely**:
+
+| Signal | How it's detected |
+|---|---|
+| Solar panels producing | P1 sensor shows export (surplus > 0W) |
+| Forecast.Solar active | Predicted production > 50W this hour |
+| Sun above horizon | `sun.sun` entity shows elevation > 5° |
+
+In practice this means the model primarily learns from **nighttime cool-downs** — when there's no solar influence and the observed heat loss is purely from insulation and thermal mass. This produces a conservative (higher) heat loss coefficient, which is exactly what you want: the model won't overestimate your home's ability to hold heat.
+
+### Indoor temperature awareness
+
+The controller uses indoor temperature in two ways:
+
+1. **Buffer check** — if indoor temperature is more than 1°C above the minimum, the home has thermal buffer. Combined with the thermal model, this can skip pre-heating.
+2. **Setpoint floor** — the setpoint never goes below `temp_minimum`, regardless of which rule is active.
+
+### Real-world scenarios
+
+**Scenario 1 — Sunny winter day (8°C, solar panels producing)**
+> Solar panels export 800W. After 10 minutes sustained export, `solar_boost` activates. Setpoint rises to 22.5°C, storing free solar energy as heat in the floor for the cold evening ahead. Grid cost: €0.
+
+**Scenario 2 — Late afternoon, cold night forecast (7°C now, forecast −2°C overnight)**
+> It's above the COP threshold now (COP ≈ 3.5), but tonight it won't be. The thermal model says your well-insulated home will stay above 20.5°C for 8 hours. Cold weather arrives in 4 hours. `indoor_buffer_ok` — no pre-heating needed.
+
+**Scenario 3 — Same forecast, but poorly insulated home**
+> Same weather, but the thermal model predicts only 3 hours of buffer. Cold arrives in 4 hours. `preheat` activates — setpoint rises to 21.5°C while the heat pump is still efficient (COP ≈ 3.5 vs. COP ≈ 1.8 at −2°C).
+
+**Scenario 4 — Cold snap (−3°C, no recovery in 6 hours)**
+> COP is poor (~1.8). Forecast shows no improvement within 6 hours. `conserve` — setpoint drops to 20.5°C minimum. The controller waits rather than running the heat pump inefficiently.
+
+**Scenario 5 — Cold but warming up (−1°C now, forecast 7°C in 4 hours)**
+> COP is poor, but recovery is coming. `conserve_await_recovery` — hold minimum temperature for a few hours, then resume normal heating when COP improves. Saves running the heat pump during the least efficient window.
+
+---
+
 ## Installation
 
 ### Step 1 — Add the repository in HACS
@@ -121,22 +261,12 @@ The **Active rule** sensor shows the controller's current decision:
 | `solar_boost` | Confirmed solar export — storing free energy as heat |
 | `solar_predicted` | Predicted solar export — pre-heating before surplus starts |
 | `preheat` | Cold period coming — pre-heating while COP is still efficient |
+| `indoor_buffer_ok` | Cold coming, but home has enough thermal buffer — skipping pre-heat |
 | `conserve` | COP poor, no recovery expected — holding minimum temperature |
 | `conserve_await_recovery` | COP poor, but recovery coming — waiting for efficient window |
 | `default` | Normal operation — maintaining ideal temperature |
 | `error_fallback` | Error occurred — using safe fallback temperature |
 | `initialising` | Controller starting up |
-
----
-
-## Upgrading from v1 (AppDaemon)
-
-v2 is a native Home Assistant integration — AppDaemon is no longer required.
-
-1. Remove the old AppDaemon app files from `/config/appdaemon/apps/smart_heatpump/`.
-2. Remove `/config/packages/smart_heatpump.yaml` (helpers are now created automatically).
-3. Remove the old `input_number.shp_*` and `input_text.shp_active_rule` helpers from the UI if desired.
-4. Install v2 via HACS (see Installation above).
 
 ---
 
@@ -162,9 +292,8 @@ v2 is a native Home Assistant integration — AppDaemon is no longer required.
 
 ## Roadmap
 
-**v2 candidates:**
+**Planned:**
 
-- **ML thermal learning** — learn the building's thermal cool-down rate and adjust thermal lag automatically.
 - **Dynamic electricity tariff optimisation** — integrate with real-time electricity prices (ENTSO-E, Tibber) to shift heating to low-price windows.
 - **Multi-zone support** — control multiple thermostats with per-zone configuration.
 - **Occupancy / presence setback** — reduce setpoint when no one is home.

@@ -173,11 +173,16 @@ class SmartHeatpumpCoordinator:
         now_utc = datetime.now(timezone.utc)
         if indoor_temp is not None and outdoor_temp is not None:
             heating_active = self._is_heating_active()
+            solar_gain = self._is_solar_gain_likely(
+                solar_surplus=solar_surplus,
+                forecast_solar=forecast_solar,
+            )
             self.thermal_store.add_observation(
                 timestamp=now_utc.timestamp(),
                 indoor_temp_c=indoor_temp,
                 outdoor_temp_c=outdoor_temp,
                 heating_active=heating_active,
+                solar_gain_likely=solar_gain,
             )
             # Save periodically (every evaluation cycle)
             await self.thermal_store.async_save()
@@ -309,6 +314,43 @@ class SmartHeatpumpCoordinator:
             return False
         action = state.attributes.get("hvac_action", "")
         return action == "heating"
+
+    def _is_solar_gain_likely(
+        self,
+        solar_surplus: float | None,
+        forecast_solar: float | None,
+    ) -> bool:
+        """Detect whether passive solar gain may be warming the house.
+
+        Solar gain inflates apparent insulation when the sun shines through
+        windows, but the heat dissipates quickly after sunset. We exclude
+        these periods from thermal learning to avoid overestimating insulation.
+
+        Returns True when any of these conditions hold:
+        - Solar panels are currently exporting (surplus > 0W)
+        - Forecast.Solar predicts significant production this hour
+        - It's daytime (sun is up) — conservative fallback when no solar
+          data is available
+        """
+        # Direct evidence: panels are producing / exporting
+        if solar_surplus is not None and solar_surplus > 0:
+            return True
+
+        # Predicted production from Forecast.Solar
+        if forecast_solar is not None and forecast_solar > 50:
+            return True
+
+        # Fallback: use sun elevation from HA (if available)
+        sun_state = self.hass.states.get("sun.sun")
+        if sun_state is not None:
+            elevation = sun_state.attributes.get("elevation", -90)
+            try:
+                if float(elevation) > 5:  # Sun more than 5° above horizon
+                    return True
+            except (TypeError, ValueError):
+                pass
+
+        return False
 
     def _read_outdoor_temp(self) -> float | None:
         """Read outdoor temperature from the weather entity."""

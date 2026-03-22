@@ -49,6 +49,7 @@ class ThermalStore:
                 indoor_temp_c=o["indoor"],
                 outdoor_temp_c=o["outdoor"],
                 heating_active=o.get("heating", False),
+                solar_gain_likely=o.get("solar", False),
             )
             for o in raw_obs
             if isinstance(o, dict)
@@ -70,6 +71,7 @@ class ThermalStore:
                     "indoor": o.indoor_temp_c,
                     "outdoor": o.outdoor_temp_c,
                     "heating": o.heating_active,
+                    "solar": o.solar_gain_likely,
                 }
                 for o in self.observations
             ],
@@ -83,6 +85,7 @@ class ThermalStore:
         indoor_temp_c: float,
         outdoor_temp_c: float,
         heating_active: bool = False,
+        solar_gain_likely: bool = False,
     ) -> None:
         """Record an observation and recompute the loss coefficient."""
         self.observations.append(
@@ -91,6 +94,7 @@ class ThermalStore:
                 indoor_temp_c=indoor_temp_c,
                 outdoor_temp_c=outdoor_temp_c,
                 heating_active=heating_active,
+                solar_gain_likely=solar_gain_likely,
             )
         )
 
