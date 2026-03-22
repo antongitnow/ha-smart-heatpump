@@ -53,6 +53,7 @@ class SmartHeatpumpCoordinator:
         self.active_rule: str = "initialising"
         self.last_target: float | None = None  # Track computed setpoint (for dry run)
         self._solar_surplus_since: datetime | None = None
+        self._import_history: list[tuple[float, float]] = []  # [(timestamp, import_w)]
         self._cancel_timer: CALLBACK_TYPE | None = None
         self._listeners: list[callback] = []
 
@@ -204,11 +205,24 @@ class SmartHeatpumpCoordinator:
             )
 
         # Solar confirmation tracking
-        # Stop immediately when grid import exceeds the stop threshold
-        import_too_high = (
-            grid_import is not None
-            and grid_import > cfg["solar_boost_stop_import"]
-        )
+        # Track grid import readings for 3-minute rolling average
+        now_ts = now_utc.timestamp()
+        if grid_import is not None:
+            self._import_history.append((now_ts, grid_import))
+        # Prune entries older than 3 minutes
+        cutoff_ts = now_ts - 180
+        self._import_history = [
+            (ts, w) for ts, w in self._import_history if ts >= cutoff_ts
+        ]
+        # Stop solar boost when 3-minute average import exceeds threshold
+        if self._import_history:
+            avg_import = sum(w for _, w in self._import_history) / len(
+                self._import_history
+            )
+        else:
+            avg_import = 0.0
+        import_too_high = avg_import > cfg["solar_boost_stop_import"]
+
         if (
             not import_too_high
             and solar_surplus is not None
