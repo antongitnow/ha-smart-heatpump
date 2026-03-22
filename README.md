@@ -63,7 +63,7 @@ The controller uses your Home Assistant weather entity (default: Met.no via `wea
 3. If yes, and it's currently warm enough for efficient operation, it **pre-heats** — storing energy in your floor while the heat pump is still efficient.
 4. If outdoor temperature is already below the COP threshold, it checks the **COP recovery horizon** (default 6h) to see if warmer weather is coming.
 
-When **Forecast.Solar** is configured, the controller also checks predicted solar production. If significant solar is expected within the next hour, it starts heating early to absorb that free energy — even before actual export begins.
+When **Forecast.Solar** is configured, the controller also checks predicted solar production. If the predicted output exceeds the **solar surplus threshold** (default 500W), it raises the setpoint to absorb that free energy — even before actual export begins.
 
 ### Thermal learning system
 
