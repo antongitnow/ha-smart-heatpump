@@ -49,7 +49,6 @@ def _decide(**overrides: object) -> tuple[float, str]:
         "indoor_temp_c": None,
         "solar_surplus_w": 0.0,
         "solar_confirmed": False,
-        "forecast_solar_w": None,
         "forecast_temps": [],
         "forecast_recovery_temps": [],
         "hours_until_below_ideal": None,
@@ -100,27 +99,10 @@ def test_t03_solar_not_yet_confirmed() -> None:
         outdoor_temp_c=12.0,
         solar_surplus_w=700.0,
         solar_confirmed=False,
-        forecast_solar_w=None,
         forecast_temps=[10.0, 9.0],
     )
     assert rule == "default"
     assert target == pytest.approx(21.0)
-
-
-# ---------------------------------------------------------------------------
-# T04 — Solar predicted via Forecast.Solar
-# ---------------------------------------------------------------------------
-
-def test_t04_solar_predicted_forecast_solar() -> None:
-    """Forecast.Solar predicts >= threshold -> solar_predicted rule."""
-    target, rule = _decide(
-        outdoor_temp_c=8.0,
-        solar_surplus_w=0.0,
-        solar_confirmed=False,
-        forecast_solar_w=600.0,
-    )
-    assert rule == "solar_predicted"
-    assert target == pytest.approx(22.5)
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +215,6 @@ def test_t11_all_sensors_unavailable() -> None:
         outdoor_temp_c=None,
         solar_surplus_w=None,
         solar_confirmed=False,
-        forecast_solar_w=None,
         forecast_temps=[],
         forecast_recovery_temps=[],
     )
