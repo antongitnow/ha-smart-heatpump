@@ -187,20 +187,13 @@ class SmartHeatpumpCoordinator:
             # Save periodically (every evaluation cycle)
             await self.thermal_store.async_save()
 
-        # Thermal model predictions
-        hours_prediction: float | None = None
+        # Thermal model prediction — hours until indoor drops below ideal
         hours_until_below_ideal: float | None = None
         if (
             self.thermal_store.loss_coefficient is not None
             and indoor_temp is not None
             and forecast_temps
         ):
-            hours_prediction = predict_hours_until_below(
-                indoor_temp_c=indoor_temp,
-                outdoor_temps=forecast_temps,
-                threshold_temp_c=cfg["temp_minimum"],
-                loss_coefficient_k=self.thermal_store.loss_coefficient,
-            )
             hours_until_below_ideal = predict_hours_until_below(
                 indoor_temp_c=indoor_temp,
                 outdoor_temps=forecast_temps,
@@ -236,9 +229,7 @@ class SmartHeatpumpCoordinator:
             preheat_delta=cfg["preheat_delta"],
             cop_threshold_temp=cfg["cop_threshold_temp"],
             solar_surplus_threshold=cfg["solar_surplus_threshold"],
-            hours_until_below_min=hours_prediction,
             hours_until_below_ideal=hours_until_below_ideal,
-            indoor_comfort_margin=cfg["indoor_comfort_margin"],
         )
 
         # Apply setpoint if changed
@@ -261,6 +252,7 @@ class SmartHeatpumpCoordinator:
                     new_setpoint=target,
                     rule=rule,
                     outdoor_temp=outdoor_temp,
+                    indoor_temp=indoor_temp,
                     solar_surplus=solar_surplus,
                 )
             else:
@@ -290,6 +282,7 @@ class SmartHeatpumpCoordinator:
                     new_setpoint=target,
                     rule=rule,
                     outdoor_temp=outdoor_temp,
+                    indoor_temp=indoor_temp,
                     solar_surplus=solar_surplus,
                 )
             else:
@@ -515,6 +508,7 @@ class SmartHeatpumpCoordinator:
         new_setpoint: float,
         rule: str,
         outdoor_temp: float | None,
+        indoor_temp: float | None,
         solar_surplus: float | None,
     ) -> None:
         """Send notification on setpoint change."""
@@ -527,6 +521,7 @@ class SmartHeatpumpCoordinator:
 
         description = RULE_DESCRIPTIONS.get(rule, rule)
         outdoor_str = f"{outdoor_temp:.1f}°C" if outdoor_temp is not None else "N/A"
+        indoor_str = f"{indoor_temp:.1f}°C" if indoor_temp is not None else "N/A"
         surplus_str = f"{solar_surplus:.0f}W" if solar_surplus is not None else "N/A"
         old_str = f"{old_setpoint:.1f}°C" if old_setpoint is not None else "N/A"
 
@@ -534,6 +529,7 @@ class SmartHeatpumpCoordinator:
         message = (
             f"{description}\n\n"
             f"Setpoint: {old_str} → {new_setpoint:.1f}°C\n"
+            f"Indoor: {indoor_str}\n"
             f"Outdoor: {outdoor_str}\n"
             f"Solar export: {surplus_str}\n"
             f"Rule: {rule}"

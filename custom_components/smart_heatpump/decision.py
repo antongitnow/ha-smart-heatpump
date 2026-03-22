@@ -5,7 +5,7 @@ No Home Assistant dependency — can be unit tested with plain pytest.
 Decision priority (highest wins):
   1. Solar surplus confirmed (FR-02) OR solar predicted (FR-03)
   2. COP pre-heat: cold coming within horizon, COP still good now (FR-04)
-     — BUT skip if indoor temp has enough thermal buffer
+     — BUT skip if thermal model predicts indoor stays above ideal
   3. COP conservation: COP poor now (FR-05)
   4. Default: maintain ideal temperature (FR-06)
 
@@ -29,9 +29,7 @@ def decide(
     preheat_delta: float,
     cop_threshold_temp: float,
     solar_surplus_threshold: float,
-    hours_until_below_min: float | None = None,
     hours_until_below_ideal: float | None = None,
-    indoor_comfort_margin: float = 1.0,
 ) -> tuple[float, str]:
     """Decide the target thermostat setpoint and active rule name.
 
@@ -49,12 +47,8 @@ def decide(
         preheat_delta: Extra °C above ideal during pre-heat.
         cop_threshold_temp: Outdoor temp below which COP is considered poor (°C).
         solar_surplus_threshold: Minimum export (W) to count as surplus.
-        hours_until_below_min: Thermal model prediction — hours until indoor temp
-            drops below temp_minimum. None = model still learning (conservative).
         hours_until_below_ideal: Thermal model prediction — hours until indoor temp
             drops below temp_ideal. None = model still learning (conservative).
-        indoor_comfort_margin: °C above temp_minimum considered "comfortable enough"
-            to skip pre-heating. Default 1.0°C.
 
     Returns:
         (target_temp, rule_name) where target_temp is clamped to >= temp_minimum.
@@ -83,33 +77,15 @@ def decide(
         and min_forecast_temp < cop_threshold_temp
         and outdoor_temp_c > cop_threshold_temp
     ):
-        # Check 1: If indoor temp won't drop below ideal through the
-        # entire forecast window, there is no reason to pre-heat at all.
+        # If thermal model predicts indoor temp will stay above ideal
+        # through the entire forecast window, skip pre-heating.
         # Example: warm outside, well-insulated home — 21°C stays 21°C.
         if hours_until_below_ideal is not None:
             forecast_hours = len(forecast_temps)
             if hours_until_below_ideal >= forecast_hours:
                 return max(temp_ideal, temp_minimum), "indoor_buffer_ok"
 
-        # Check 2: Indoor buffer above minimum — thermal model predicts
-        # the home will stay above temp_minimum through the cold period.
-        has_indoor_buffer = (
-            indoor_temp_c is not None
-            and indoor_temp_c > temp_minimum + indoor_comfort_margin
-        )
-
-        if has_indoor_buffer and hours_until_below_min is not None:
-            # Thermal model is ready — find when cold weather arrives
-            first_cold_hour = next(
-                (i for i, t in enumerate(forecast_temps) if t < cop_threshold_temp),
-                None,
-            )
-            # If indoor temp will stay above minimum longer than it takes
-            # for cold to arrive and pass, skip pre-heating
-            if first_cold_hour is not None and hours_until_below_min > first_cold_hour:
-                return max(temp_ideal, temp_minimum), "indoor_buffer_ok"
-
-        # No thermal data or not enough buffer — pre-heat as usual
+        # No thermal data or indoor will drop below ideal — pre-heat
         target = temp_ideal + preheat_delta
         return max(target, temp_minimum), "preheat"
 
