@@ -37,10 +37,13 @@ flowchart TD
     FORECAST -- Yes --> COPGOOD{COP still<br/>good now?}
     COPGOOD -- No --> COPNOW
     COPGOOD -- Yes --> BUFFER{Indoor temp<br/>has buffer?}
+    COPGOOD -- Yes --> IDEALCHECK{Will indoor temp<br/>stay above ideal<br/>through forecast?}
+    IDEALCHECK -- "Yes (thermal model)" --> SKIP["✅ indoor_buffer_ok<br/>Setpoint → ideal temp"]
+    IDEALCHECK -- "No / unknown" --> BUFFER{Indoor temp<br/>has buffer?}
     BUFFER -- "No / unknown" --> PREHEAT["🔥 preheat<br/>Setpoint → ideal + delta"]
     BUFFER -- "Yes + thermal model" --> PREDICT{Will indoor temp<br/>stay above minimum<br/>through cold period?}
     PREDICT -- No --> PREHEAT
-    PREDICT -- Yes --> SKIP["✅ indoor_buffer_ok<br/>Setpoint → ideal temp"]
+    PREDICT -- Yes --> SKIP
     COPNOW -- No --> DEFAULT2["🏠 default<br/>Setpoint → ideal temp"]
     COPNOW -- Yes --> RECOVERY{Recovery<br/>expected?}
     RECOVERY -- Yes --> AWAIT["❄️ conserve_await_recovery<br/>Setpoint → minimum temp"]
@@ -125,10 +128,11 @@ In practice this means the model primarily learns from **nighttime cool-downs** 
 
 ### Indoor temperature awareness
 
-The controller uses indoor temperature in two ways:
+The controller uses indoor temperature in three ways:
 
-1. **Buffer check** — if indoor temperature is more than 1°C above the minimum, the home has thermal buffer. Combined with the thermal model, this can skip pre-heating.
-2. **Setpoint floor** — the setpoint never goes below `temp_minimum`, regardless of which rule is active.
+1. **Ideal temp check** — if the thermal model predicts indoor temperature will stay above the ideal temperature (e.g. 21°C) through the entire forecast window, pre-heating is skipped entirely. This handles cases where it stays warm enough outside that the house simply won't cool down.
+2. **Buffer check** — if indoor temperature is more than 1°C above the minimum, the home has thermal buffer. Combined with the thermal model, this can skip pre-heating even when a cold period is coming.
+3. **Setpoint floor** — the setpoint never goes below `temp_minimum`, regardless of which rule is active.
 
 ### Real-world scenarios
 
@@ -136,7 +140,7 @@ The controller uses indoor temperature in two ways:
 > Solar panels export 800W. After 10 minutes sustained export, `solar_boost` activates. Setpoint rises to 22.5°C, storing free solar energy as heat in the floor for the cold evening ahead. Grid cost: €0.
 
 **Scenario 2 — Late afternoon, cold night forecast (7°C now, forecast −2°C overnight)**
-> It's above the COP threshold now (COP ≈ 3.5), but tonight it won't be. The thermal model says your well-insulated home will stay above 20.5°C for 8 hours. Cold weather arrives in 4 hours. `indoor_buffer_ok` — no pre-heating needed.
+> It's above the COP threshold now (COP ≈ 3.5), but tonight it won't be. The thermal model predicts your well-insulated home will stay above 21°C for the entire forecast window. `indoor_buffer_ok` — the house won't cool down enough to need pre-heating.
 
 **Scenario 3 — Same forecast, but poorly insulated home**
 > Same weather, but the thermal model predicts only 3 hours of buffer. Cold arrives in 4 hours. `preheat` activates — setpoint rises to 21.5°C while the heat pump is still efficient (COP ≈ 3.5 vs. COP ≈ 1.8 at −2°C).

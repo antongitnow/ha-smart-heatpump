@@ -187,8 +187,9 @@ class SmartHeatpumpCoordinator:
             # Save periodically (every evaluation cycle)
             await self.thermal_store.async_save()
 
-        # Thermal model prediction
+        # Thermal model predictions
         hours_prediction: float | None = None
+        hours_until_below_ideal: float | None = None
         if (
             self.thermal_store.loss_coefficient is not None
             and indoor_temp is not None
@@ -198,6 +199,12 @@ class SmartHeatpumpCoordinator:
                 indoor_temp_c=indoor_temp,
                 outdoor_temps=forecast_temps,
                 threshold_temp_c=cfg["temp_minimum"],
+                loss_coefficient_k=self.thermal_store.loss_coefficient,
+            )
+            hours_until_below_ideal = predict_hours_until_below(
+                indoor_temp_c=indoor_temp,
+                outdoor_temps=forecast_temps,
+                threshold_temp_c=cfg["temp_ideal"],
                 loss_coefficient_k=self.thermal_store.loss_coefficient,
             )
 
@@ -230,6 +237,7 @@ class SmartHeatpumpCoordinator:
             cop_threshold_temp=cfg["cop_threshold_temp"],
             solar_surplus_threshold=cfg["solar_surplus_threshold"],
             hours_until_below_min=hours_prediction,
+            hours_until_below_ideal=hours_until_below_ideal,
             indoor_comfort_margin=cfg["indoor_comfort_margin"],
         )
 

@@ -372,3 +372,57 @@ def test_t19_indoor_temp_unknown_preheats() -> None:
     )
     assert rule == "preheat"
     assert target == pytest.approx(21.5)
+
+
+# ---------------------------------------------------------------------------
+# T20 — Indoor stays above ideal through forecast → skip preheat
+# ---------------------------------------------------------------------------
+
+def test_t20_indoor_stays_above_ideal_skips_preheat() -> None:
+    """Thermal model predicts indoor won't drop below ideal (21°C) in the
+    entire forecast window (e.g. warm outside, well-insulated home).
+    No reason to pre-heat."""
+    target, rule = _decide(
+        outdoor_temp_c=7.0,
+        indoor_temp_c=22.0,
+        forecast_temps=[6.0, 4.0, 3.0, 5.0, 7.0],  # 5 hours, cold dip
+        hours_until_below_min=48.0,
+        hours_until_below_ideal=10.0,  # 10h > 5 forecast hours → stays above ideal
+    )
+    assert rule == "indoor_buffer_ok"
+    assert target == pytest.approx(21.0)
+
+
+# ---------------------------------------------------------------------------
+# T21 — Indoor will drop below ideal → still preheat
+# ---------------------------------------------------------------------------
+
+def test_t21_indoor_drops_below_ideal_preheats() -> None:
+    """Thermal model predicts indoor will drop below ideal within forecast
+    window → pre-heat is needed."""
+    target, rule = _decide(
+        outdoor_temp_c=7.0,
+        indoor_temp_c=21.5,
+        forecast_temps=[6.0, 4.0, 3.0, 2.0, 1.0, 3.0, 5.0, 7.0],  # 8 hours
+        hours_until_below_min=6.0,
+        hours_until_below_ideal=3.0,  # 3h < 8 forecast hours → will drop below ideal
+    )
+    assert rule == "preheat"
+    assert target == pytest.approx(21.5)
+
+
+# ---------------------------------------------------------------------------
+# T22 — Thermal model not ready → preheat conservatively (no ideal check)
+# ---------------------------------------------------------------------------
+
+def test_t22_no_thermal_model_still_preheats() -> None:
+    """Thermal model not ready (both predictions None) → conservative preheat."""
+    target, rule = _decide(
+        outdoor_temp_c=7.0,
+        indoor_temp_c=22.0,
+        forecast_temps=[4.0, 2.0, 1.5],
+        hours_until_below_min=None,
+        hours_until_below_ideal=None,
+    )
+    assert rule == "preheat"
+    assert target == pytest.approx(21.5)

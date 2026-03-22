@@ -30,6 +30,7 @@ def decide(
     cop_threshold_temp: float,
     solar_surplus_threshold: float,
     hours_until_below_min: float | None = None,
+    hours_until_below_ideal: float | None = None,
     indoor_comfort_margin: float = 1.0,
 ) -> tuple[float, str]:
     """Decide the target thermostat setpoint and active rule name.
@@ -50,6 +51,8 @@ def decide(
         solar_surplus_threshold: Minimum export (W) to count as surplus.
         hours_until_below_min: Thermal model prediction — hours until indoor temp
             drops below temp_minimum. None = model still learning (conservative).
+        hours_until_below_ideal: Thermal model prediction — hours until indoor temp
+            drops below temp_ideal. None = model still learning (conservative).
         indoor_comfort_margin: °C above temp_minimum considered "comfortable enough"
             to skip pre-heating. Default 1.0°C.
 
@@ -80,7 +83,16 @@ def decide(
         and min_forecast_temp < cop_threshold_temp
         and outdoor_temp_c > cop_threshold_temp
     ):
-        # Check if we can skip pre-heating based on indoor temperature buffer
+        # Check 1: If indoor temp won't drop below ideal through the
+        # entire forecast window, there is no reason to pre-heat at all.
+        # Example: warm outside, well-insulated home — 21°C stays 21°C.
+        if hours_until_below_ideal is not None:
+            forecast_hours = len(forecast_temps)
+            if hours_until_below_ideal >= forecast_hours:
+                return max(temp_ideal, temp_minimum), "indoor_buffer_ok"
+
+        # Check 2: Indoor buffer above minimum — thermal model predicts
+        # the home will stay above temp_minimum through the cold period.
         has_indoor_buffer = (
             indoor_temp_c is not None
             and indoor_temp_c > temp_minimum + indoor_comfort_margin
