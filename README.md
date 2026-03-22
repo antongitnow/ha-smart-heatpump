@@ -28,8 +28,7 @@ Rules are evaluated top-to-bottom. The first match wins.
 ```mermaid
 flowchart TD
     START([Every 15 min]) --> SOLAR{Solar surplus<br/>or predicted?}
-    SOLAR -- "Yes, confirmed" --> BOOST["solar_boost<br/>Setpoint → solar boost temp"]
-    SOLAR -- "Yes, predicted" --> PREDICTED["solar_predicted<br/>Setpoint → solar boost temp"]
+    SOLAR -- Yes --> BOOST["solar_boost<br/>Setpoint → solar boost temp"]
     SOLAR -- No --> OUTDOOR{Outdoor temp<br/>known?}
     OUTDOOR -- No --> DEFAULT1["default<br/>Setpoint → ideal temp"]
     OUTDOOR -- Yes --> FORECAST{Cold period<br/>coming?}
@@ -61,7 +60,7 @@ The controller uses your Home Assistant weather entity (default: Met.no via `wea
 3. If yes, and it's currently warm enough for efficient operation, it **pre-heats** — storing energy in your floor while the heat pump is still efficient.
 4. If outdoor temperature is already below the COP threshold, it checks the **COP recovery horizon** (default 6h) to see if warmer weather is coming.
 
-When **Forecast.Solar** is configured, the controller also checks predicted solar production. If the predicted output exceeds the **solar surplus threshold** (default 500W), it raises the setpoint to absorb that free energy — even before actual export begins.
+**Solar boost** activates only when actual export is confirmed — the P1 sensor must show sustained export above the **solar surplus threshold** (default 500W) for at least the **solar confirmation delay** (default 10 minutes). The boost stops immediately when grid import exceeds the **solar boost stop import** threshold (default 700W), preventing the heat pump from consuming more than what the panels produce.
 
 ### Thermal learning system
 
@@ -202,6 +201,7 @@ All parameters appear as slider entities under the **Smart Heatpump Controller**
 | Forecast horizon | 24 | 1–48 | h | How far ahead to check for cold periods |
 | Floor heating thermal lag | 3 | 0–6 | h | Floor heating warm-up lag |
 | Evaluation interval | 15 | 5–60 | min | How often the controller re-evaluates |
+| Solar boost stop import | 700 | 0–3000 | W | Grid import above which solar boost stops |
 
 ---
 
@@ -234,7 +234,7 @@ Use the **Notifications** switch on the device or dashboard to mute/unmute witho
 
 ## Forecast.Solar (optional)
 
-Forecast.Solar predicts solar production based on your panel configuration. When configured, the controller pre-heats *before* solar surplus starts.
+Forecast.Solar predicts solar production based on your panel configuration. When configured, the controller uses this data to improve the **thermal learning system** — it helps detect solar gain periods more accurately and excludes them from the heat loss model.
 
 1. Install **Forecast.Solar** via HACS or the built-in integration.
 2. Go to **Settings → Devices & services → Smart Heatpump Controller → Configure**.
@@ -250,7 +250,6 @@ The **Active rule** sensor shows the controller's current decision:
 | Rule | Meaning |
 |---|---|
 | `solar_boost` | Confirmed solar export — storing free energy as heat |
-| `solar_predicted` | Predicted solar export — pre-heating before surplus starts |
 | `preheat` | Cold period coming — pre-heating while COP is still efficient |
 | `indoor_buffer_ok` | Indoor temp will stay above ideal through forecast — skipping pre-heat |
 | `conserve` | COP poor, no recovery expected — holding minimum temperature |

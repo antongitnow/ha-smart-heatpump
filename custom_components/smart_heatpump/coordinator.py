@@ -162,7 +162,9 @@ class SmartHeatpumpCoordinator:
         # Read sensors
         outdoor_temp = self._read_outdoor_temp()
         indoor_temp = self._read_indoor_temp()
-        solar_surplus = self._read_solar_surplus()
+        net_power = self._read_net_power()
+        solar_surplus = max(0.0, -net_power) if net_power is not None else None
+        grid_import = max(0.0, net_power) if net_power is not None else None
         forecast_temps = await self._async_read_forecast_temps(effective_horizon)
         forecast_recovery = await self._async_read_forecast_temps(
             cfg["cop_recovery_horizon_hours"]
@@ -202,8 +204,14 @@ class SmartHeatpumpCoordinator:
             )
 
         # Solar confirmation tracking
+        # Stop immediately when grid import exceeds the stop threshold
+        import_too_high = (
+            grid_import is not None
+            and grid_import > cfg["solar_boost_stop_import"]
+        )
         if (
-            solar_surplus is not None
+            not import_too_high
+            and solar_surplus is not None
             and solar_surplus >= cfg["solar_surplus_threshold"]
         ):
             if self._solar_surplus_since is None:
@@ -220,7 +228,6 @@ class SmartHeatpumpCoordinator:
             indoor_temp_c=indoor_temp,
             solar_surplus_w=solar_surplus,
             solar_confirmed=solar_confirmed,
-            forecast_solar_w=forecast_solar,
             forecast_temps=forecast_temps,
             forecast_recovery_temps=forecast_recovery,
             temp_ideal=cfg["temp_ideal"],
@@ -368,10 +375,10 @@ class SmartHeatpumpCoordinator:
         except (TypeError, ValueError):
             return None
 
-    def _read_solar_surplus(self) -> float | None:
-        """Read net grid power and derive solar export.
+    def _read_net_power(self) -> float | None:
+        """Read net grid power in watts.
 
-        Positive P1 = importing. Negative P1 = exporting surplus.
+        Returns the raw P1 value: positive = importing, negative = exporting.
         """
         entity_id = self._opt(CONF_P1_POWER)
         if not entity_id:
@@ -381,7 +388,7 @@ class SmartHeatpumpCoordinator:
             _LOGGER.warning("P1 sensor '%s' unavailable", entity_id)
             return None
         try:
-            return max(0.0, -float(state.state))
+            return float(state.state)
         except (TypeError, ValueError):
             return None
 

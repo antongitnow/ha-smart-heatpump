@@ -3,11 +3,11 @@
 No Home Assistant dependency — can be unit tested with plain pytest.
 
 Decision priority (highest wins):
-  1. Solar surplus confirmed (FR-02) OR solar predicted (FR-03)
-  2. COP pre-heat: cold coming within horizon, COP still good now (FR-04)
+  1. Solar surplus confirmed — actual export sustained above threshold
+  2. COP pre-heat: cold coming within horizon, COP still good now
      — BUT skip if thermal model predicts indoor stays above ideal
-  3. COP conservation: COP poor now (FR-05)
-  4. Default: maintain ideal temperature (FR-06)
+  3. COP conservation: COP poor now
+  4. Default: maintain ideal temperature
 
 Safety floor (FR-08): setpoint is always >= temp_minimum regardless of rule.
 """
@@ -20,7 +20,6 @@ def decide(
     indoor_temp_c: float | None,
     solar_surplus_w: float | None,
     solar_confirmed: bool,
-    forecast_solar_w: float | None,
     forecast_temps: list[float],
     forecast_recovery_temps: list[float],
     temp_ideal: float,
@@ -38,7 +37,6 @@ def decide(
         indoor_temp_c: Current indoor temperature (°C), or None if unavailable.
         solar_surplus_w: Current solar export (W, >=0), or None if unavailable.
         solar_confirmed: True when export sustained >= solar_confirm_minutes.
-        forecast_solar_w: Predicted solar yield next hour (Wh ≈ W), or None.
         forecast_temps: Outdoor forecast temps up to effective preheat horizon.
         forecast_recovery_temps: Outdoor forecast temps for COP recovery horizon.
         temp_ideal: Default comfort setpoint (°C).
@@ -53,14 +51,9 @@ def decide(
     Returns:
         (target_temp, rule_name) where target_temp is clamped to >= temp_minimum.
     """
-    # Priority 1: Solar surplus — confirmed or predicted
-    solar_predicted = (
-        forecast_solar_w is not None
-        and forecast_solar_w >= solar_surplus_threshold
-    )
-    if solar_confirmed or solar_predicted:
-        rule = "solar_boost" if solar_confirmed else "solar_predicted"
-        return max(temp_solar_boost, temp_minimum), rule
+    # Priority 1: Solar surplus — confirmed actual export only
+    if solar_confirmed:
+        return max(temp_solar_boost, temp_minimum), "solar_boost"
 
     # If outdoor temp is unknown, fall back to ideal
     if outdoor_temp_c is None:
