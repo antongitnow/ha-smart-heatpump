@@ -52,6 +52,7 @@ class SmartHeatpumpCoordinator:
         # Evaluation state
         self.active_rule: str = "initialising"
         self.last_target: float | None = None  # Track computed setpoint (for dry run)
+        self.hours_until_below_ideal: float | None = None
         self._solar_surplus_since: datetime | None = None
         self._solar_confirmed: bool = False  # Latched once confirmed
         self._import_history: list[tuple[float, float]] = []  # [(timestamp, import_w)]
@@ -204,6 +205,7 @@ class SmartHeatpumpCoordinator:
                 threshold_temp_c=cfg["temp_ideal"],
                 loss_coefficient_k=self.thermal_store.loss_coefficient,
             )
+        self.hours_until_below_ideal = hours_until_below_ideal
 
         # Solar confirmation tracking
         # Track grid import readings for 3-minute rolling average
