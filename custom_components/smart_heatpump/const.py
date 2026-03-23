@@ -29,7 +29,7 @@ DEFAULTS: dict[str, float] = {
     "forecast_horizon_hours": 24.0,
     "thermal_lag_hours": 3.0,
     "evaluation_interval_min": 15.0,
-    "solar_boost_stop_import": 700.0,
+    "solar_boost_stop_import": 500.0,
 }
 
 # ---------------------------------------------------------------------------
