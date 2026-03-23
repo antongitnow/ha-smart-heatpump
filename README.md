@@ -60,7 +60,7 @@ The controller uses your Home Assistant weather entity (default: Met.no via `wea
 3. If yes, and it's currently warm enough for efficient operation, it **pre-heats** — storing energy in your floor while the heat pump is still efficient.
 4. If outdoor temperature is already below the COP threshold, it checks the **COP recovery horizon** (default 6h) to see if warmer weather is coming.
 
-**Solar boost** activates only when actual export is confirmed — the P1 sensor must show sustained export above the **solar surplus threshold** (default 500W) for at least the **solar confirmation delay** (default 10 minutes). The boost stops when the **3-minute rolling average** of grid import exceeds the **solar boost stop import** threshold (default 700W), preventing the heat pump from consuming more than what the panels produce. Using a rolling average avoids stopping on brief import spikes (e.g. a kettle switching on).
+**Solar boost** activates only when actual export is confirmed — the P1 sensor must show sustained export above the **solar surplus threshold** (default 500W) for at least the **solar confirmation delay** (default 10 minutes). Once active, boost **stays on** as long as there is no net import, even if export drops below 500W — the heat pump is already running, so it makes sense to keep using free solar energy. The boost stops when the **3-minute rolling average** of grid import exceeds the **solar boost stop import** threshold (default 500W). Using a rolling average for the stop threshold avoids stopping on brief import spikes (e.g. a kettle switching on).
 
 ### Thermal learning system
 
@@ -201,7 +201,7 @@ All parameters appear as slider entities under the **Smart Heatpump Controller**
 | Forecast horizon | 24 | 1–48 | h | How far ahead to check for cold periods |
 | Floor heating thermal lag | 3 | 0–6 | h | Floor heating warm-up lag |
 | Evaluation interval | 15 | 5–60 | min | How often the controller re-evaluates |
-| Solar boost stop import | 700 | 0–3000 | W | 3-min average grid import above which solar boost stops |
+| Solar boost stop import | 500 | 0–3000 | W | 3-min average grid import above which solar boost stops |
 
 ---
 

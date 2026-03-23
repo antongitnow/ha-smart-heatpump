@@ -53,6 +53,7 @@ class SmartHeatpumpCoordinator:
         self.active_rule: str = "initialising"
         self.last_target: float | None = None  # Track computed setpoint (for dry run)
         self._solar_surplus_since: datetime | None = None
+        self._solar_confirmed: bool = False  # Latched once confirmed
         self._import_history: list[tuple[float, float]] = []  # [(timestamp, import_w)]
         self._cancel_timer: CALLBACK_TYPE | None = None
         self._listeners: list[callback] = []
@@ -223,18 +224,23 @@ class SmartHeatpumpCoordinator:
             avg_import = 0.0
         import_too_high = avg_import > cfg["solar_boost_stop_import"]
 
-        if (
-            not import_too_high
+        if import_too_high:
+            # Stop: 3-min avg import exceeds threshold
+            self._solar_surplus_since = None
+            self._solar_confirmed = False
+        elif (
+            not self._solar_confirmed
             and solar_surplus is not None
             and solar_surplus >= cfg["solar_surplus_threshold"]
         ):
+            # Start: surplus above threshold — track confirmation timer
             if self._solar_surplus_since is None:
                 self._solar_surplus_since = now_utc
             elapsed = (now_utc - self._solar_surplus_since).total_seconds() / 60.0
-            solar_confirmed = elapsed >= cfg["solar_confirm_minutes"]
-        else:
-            self._solar_surplus_since = None
-            solar_confirmed = False
+            if elapsed >= cfg["solar_confirm_minutes"]:
+                self._solar_confirmed = True
+
+        solar_confirmed = self._solar_confirmed
 
         # Call pure decision function
         target, rule = decide(
