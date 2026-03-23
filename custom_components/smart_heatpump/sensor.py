@@ -9,7 +9,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, RULE_DESCRIPTIONS
-from .thermal_model import MIN_SAMPLES
+from .thermal_model import MIN_SAMPLES, count_valid_cooling_samples
 
 
 async def async_setup_entry(
@@ -97,14 +97,36 @@ class ThermalLearningSensor(_BaseSensor):
     @property
     def extra_state_attributes(self) -> dict[str, object]:
         store = self._coordinator.thermal_store
+        k = store.loss_coefficient
+        valid = count_valid_cooling_samples(store.observations)
+
         attrs: dict[str, object] = {
-            "data_points": store.sample_count,
-            "min_points_needed": MIN_SAMPLES,
+            "total_observations": store.sample_count,
+            "valid_cooling_samples": valid,
+            "min_samples_needed": MIN_SAMPLES,
         }
-        if store.loss_coefficient is not None:
-            attrs["loss_coefficient"] = round(store.loss_coefficient, 5)
+
+        if k is not None:
+            attrs["loss_coefficient_k"] = round(k, 5)
             # Human-readable: approximate °C drop per hour at 10°C delta
-            attrs["approx_drop_per_hour"] = round(
-                store.loss_coefficient * 10.0, 2
-            )
+            attrs["approx_drop_per_hour_at_10c_delta"] = round(k * 10.0, 2)
+            # Insulation quality label
+            if k <= 0.03:
+                quality = "excellent"
+            elif k <= 0.05:
+                quality = "well insulated"
+            elif k <= 0.10:
+                quality = "average"
+            else:
+                quality = "poorly insulated"
+            attrs["insulation_quality"] = quality
+
+        # Prediction — hours until indoor drops below ideal
+        h = self._coordinator.hours_until_below_ideal
+        if h is not None:
+            if h == float("inf"):
+                attrs["hours_until_below_ideal"] = "not expected"
+            else:
+                attrs["hours_until_below_ideal"] = round(h, 1)
+
         return attrs

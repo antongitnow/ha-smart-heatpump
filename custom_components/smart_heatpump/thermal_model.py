@@ -113,6 +113,36 @@ def compute_loss_coefficient(
     return k_estimates[mid]
 
 
+def count_valid_cooling_samples(observations: list[ThermalObservation]) -> int:
+    """Count observation pairs that pass all filters for k estimation."""
+    count = 0
+    for i in range(1, len(observations)):
+        prev, curr = observations[i - 1], observations[i]
+        if prev.heating_active or curr.heating_active:
+            continue
+        if prev.solar_gain_likely or curr.solar_gain_likely:
+            continue
+        if curr.indoor_temp_c > prev.indoor_temp_c + 0.05:
+            continue
+        dt_hours = (curr.timestamp - prev.timestamp) / 3600.0
+        if dt_hours <= 0 or dt_hours > 2.0:
+            continue
+        t_out = (prev.outdoor_temp_c + curr.outdoor_temp_c) / 2.0
+        delta_prev = prev.indoor_temp_c - t_out
+        delta_curr = curr.indoor_temp_c - t_out
+        if abs(delta_prev) < _MIN_DELTA or abs(delta_curr) < _MIN_DELTA:
+            continue
+        if delta_prev <= 0 or delta_curr <= 0:
+            continue
+        ratio = delta_curr / delta_prev
+        if ratio <= 0 or ratio >= 1.5:
+            continue
+        k_est = -math.log(ratio) / dt_hours
+        if 0.001 <= k_est <= 0.5:
+            count += 1
+    return count
+
+
 def predict_hours_until_below(
     indoor_temp_c: float,
     outdoor_temps: list[float],
