@@ -1,9 +1,14 @@
-"""Unit tests for the Smart Heatpump decide() function.
+"""Unit tests for the Smart Heatpump solar incremental decision logic.
 
-Tests cover all scenarios from PRD Section 11, plus indoor temperature
-and thermal model tests.
+Tests cover the solar-incremental flow from the flowchart:
+  - Heating season check
+  - Solar boost activation on surplus
+  - Step-down on moderate import
+  - Reset on high import
+  - Deactivation when setpoint reaches ideal
 
-No Home Assistant dependency — decide() is a pure Python function.
+No Home Assistant dependency — decide_solar() and is_heating_season()
+are pure Python functions.
 
 Run with:
     pytest tests/test_decision_logic.py -v
@@ -26,330 +31,283 @@ _decision_path = (
 _spec = importlib.util.spec_from_file_location("decision", _decision_path)
 _module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_module)
-decide = _module.decide
+decide_solar = _module.decide_solar
+is_heating_season = _module.is_heating_season
 
 # ---------------------------------------------------------------------------
-# Shared default config values (match PRD Section 6 defaults)
+# Shared default config values
 # ---------------------------------------------------------------------------
 
 DEFAULTS = dict(
     temp_ideal=21.0,
-    temp_minimum=20.5,
-    temp_solar_boost=22.5,
-    preheat_delta=0.5,
-    cop_threshold_temp=5.0,
     solar_surplus_threshold=500.0,
+    solar_release_threshold_high=800.0,
+    solar_release_threshold_low=300.0,
+    solar_step_delta=0.5,
+    season_start_month=9,
+    season_end_month=4,
 )
 
 
-def _decide(**overrides: object) -> tuple[float, str]:
-    """Call decide() with defaults, overriding specific kwargs."""
+def _decide(**overrides: object) -> tuple[float, str, bool]:
+    """Call decide_solar() with defaults, overriding specific kwargs."""
     kwargs = {
-        "outdoor_temp_c": 8.0,
-        "indoor_temp_c": None,
-        "solar_surplus_w": 0.0,
-        "solar_confirmed": False,
-        "forecast_temps": [],
-        "forecast_recovery_temps": [],
-        "hours_until_below_ideal": None,
+        "current_month": 11,  # November — heating season
+        "solar_boost_active": False,
+        "current_export_w": 0.0,
+        "avg_import_5min_w": 0.0,
+        "current_temperature": 21.0,
+        "current_setpoint": 21.0,
         **DEFAULTS,
         **overrides,
     }
-    return decide(**kwargs)  # type: ignore[arg-type]
-
-
-# ---------------------------------------------------------------------------
-# T01 — Normal: no solar, mild outdoor, warm forecast
-# ---------------------------------------------------------------------------
-
-def test_t01_default_no_solar_mild_outdoor() -> None:
-    """No special conditions active -> default rule, ideal setpoint."""
-    target, rule = _decide(
-        outdoor_temp_c=8.0,
-        solar_surplus_w=0.0,
-        solar_confirmed=False,
-        forecast_temps=[7.0, 6.5, 6.0],
-    )
-    assert rule == "default"
-    assert target == pytest.approx(21.0)
-
-
-# ---------------------------------------------------------------------------
-# T02 — Solar surplus confirmed
-# ---------------------------------------------------------------------------
-
-def test_t02_solar_surplus_confirmed() -> None:
-    """Confirmed solar export -> solar_boost rule, boost setpoint."""
-    target, rule = _decide(
-        outdoor_temp_c=12.0,
-        solar_surplus_w=700.0,
-        solar_confirmed=True,
-    )
-    assert rule == "solar_boost"
-    assert target == pytest.approx(22.5)
-
-
-# ---------------------------------------------------------------------------
-# T03 — Solar surplus present but not yet confirmed, no Forecast.Solar
-# ---------------------------------------------------------------------------
-
-def test_t03_solar_not_yet_confirmed() -> None:
-    """Export above threshold but not confirmed -> default."""
-    target, rule = _decide(
-        outdoor_temp_c=12.0,
-        solar_surplus_w=700.0,
-        solar_confirmed=False,
-        forecast_temps=[10.0, 9.0],
-    )
-    assert rule == "default"
-    assert target == pytest.approx(21.0)
-
-
-# ---------------------------------------------------------------------------
-# T05 — Pre-heat: cold coming within horizon, COP still good now
-# ---------------------------------------------------------------------------
-
-def test_t05_preheat_cold_coming_cop_good() -> None:
-    """Forecast dips below threshold while outdoor is still above -> preheat."""
-    target, rule = _decide(
-        outdoor_temp_c=6.0,
-        forecast_temps=[4.0, 2.0, 1.5],
-    )
-    assert rule == "preheat"
-    assert target == pytest.approx(21.0 + 0.5)
-
-
-# ---------------------------------------------------------------------------
-# T06 — COP poor now, no recovery coming
-# ---------------------------------------------------------------------------
-
-def test_t06_conserve_no_recovery() -> None:
-    """Outdoor below threshold, recovery also cold -> conserve."""
-    target, rule = _decide(
-        outdoor_temp_c=2.0,
-        forecast_recovery_temps=[1.0, 0.5, 1.0],
-    )
-    assert rule == "conserve"
-    assert target == pytest.approx(20.5)
-
-
-# ---------------------------------------------------------------------------
-# T07 — COP poor now, recovery coming within horizon
-# ---------------------------------------------------------------------------
-
-def test_t07_conserve_await_recovery() -> None:
-    """Outdoor below threshold, recovery forecast shows improvement -> await."""
-    target, rule = _decide(
-        outdoor_temp_c=2.0,
-        forecast_recovery_temps=[1.0, 4.0, 7.0],
-    )
-    assert rule == "conserve_await_recovery"
-    assert target == pytest.approx(20.5)
-
-
-# ---------------------------------------------------------------------------
-# T08 — Solar wins over conserve_await_recovery
-# ---------------------------------------------------------------------------
-
-def test_t08_solar_wins_over_conserve_await_recovery() -> None:
-    """Confirmed solar export beats conservation mode."""
-    target, rule = _decide(
-        outdoor_temp_c=2.0,
-        solar_surplus_w=700.0,
-        solar_confirmed=True,
-        forecast_recovery_temps=[1.0, 4.0, 7.0],
-    )
-    assert rule == "solar_boost"
-    assert target == pytest.approx(22.5)
-
-
-# ---------------------------------------------------------------------------
-# T09 — Solar wins over pre-heat simultaneously
-# ---------------------------------------------------------------------------
-
-def test_t09_solar_wins_over_preheat() -> None:
-    """Confirmed solar export beats pre-heat rule."""
-    target, rule = _decide(
-        outdoor_temp_c=6.0,
-        solar_surplus_w=700.0,
-        solar_confirmed=True,
-        forecast_temps=[2.0, 1.0],
-    )
-    assert rule == "solar_boost"
-    assert target == pytest.approx(22.5)
-
-
-# ---------------------------------------------------------------------------
-# T10 — Safety floor: computed target cannot go below temp_minimum
-# ---------------------------------------------------------------------------
-
-def test_t10_safety_floor_enforced() -> None:
-    """Even with conserve rule the setpoint is always >= temp_minimum."""
-    target, rule = _decide(
-        outdoor_temp_c=2.0,
-        temp_minimum=20.5,
-        forecast_recovery_temps=[],
-    )
-    assert rule == "conserve"
-    assert target >= 20.5
-
-
-def test_t10_safety_floor_custom_minimum() -> None:
-    """Safety floor applies regardless of which rule is active."""
-    target, rule = _decide(
-        outdoor_temp_c=8.0,
-        temp_ideal=20.5,
-        temp_minimum=20.5,
-        forecast_temps=[7.0],
-    )
-    assert target >= 20.5
-
-
-# ---------------------------------------------------------------------------
-# T11 — All sensors unavailable (None inputs)
-# ---------------------------------------------------------------------------
-
-def test_t11_all_sensors_unavailable() -> None:
-    """When outdoor temp is None and forecast is empty -> default fallback."""
-    target, rule = _decide(
-        outdoor_temp_c=None,
-        solar_surplus_w=None,
-        solar_confirmed=False,
-        forecast_temps=[],
-        forecast_recovery_temps=[],
-    )
-    assert rule == "default"
-    assert target == pytest.approx(21.0)
-
-
-# ---------------------------------------------------------------------------
-# T12 — Empty forecast list
-# ---------------------------------------------------------------------------
-
-def test_t12_empty_forecast_list() -> None:
-    """No forecast data available -> default applies."""
-    target, rule = _decide(
-        outdoor_temp_c=8.0,
-        forecast_temps=[],
-        forecast_recovery_temps=[],
-    )
-    assert rule == "default"
-    assert target == pytest.approx(21.0)
-
-
-# ---------------------------------------------------------------------------
-# T13 — Boundary: outdoor exactly equals cop_threshold
-# ---------------------------------------------------------------------------
-
-def test_t13_outdoor_exactly_equals_cop_threshold() -> None:
-    """At exactly threshold COP is considered poor -> conserve."""
-    target, rule = _decide(
-        outdoor_temp_c=5.0,
-        cop_threshold_temp=5.0,
-        forecast_temps=[],
-        forecast_recovery_temps=[],
-    )
-    assert rule == "conserve"
-    assert target == pytest.approx(20.5)
-
-
-# ---------------------------------------------------------------------------
-# T14 — Recovery boundary: max_recovery exactly equals threshold
-# ---------------------------------------------------------------------------
-
-def test_t14_max_recovery_exactly_equals_threshold() -> None:
-    """When max recovery equals threshold -> conserve_await_recovery."""
-    target, rule = _decide(
-        outdoor_temp_c=2.0,
-        cop_threshold_temp=5.0,
-        forecast_recovery_temps=[3.0, 5.0],
-    )
-    assert rule == "conserve_await_recovery"
-    assert target == pytest.approx(20.5)
+    return decide_solar(**kwargs)  # type: ignore[arg-type]
 
 
 # ===========================================================================
-# Thermal model tests — indoor stays above ideal → skip preheat
+# Heating season tests
 # ===========================================================================
 
-# ---------------------------------------------------------------------------
-# T15 — Thermal model says indoor stays above ideal → skip preheat
-# ---------------------------------------------------------------------------
+class TestHeatingSeasonCheck:
+    """Tests for is_heating_season() logic."""
 
-def test_t15_indoor_stays_above_ideal_skips_preheat() -> None:
-    """Thermal model predicts indoor won't drop below ideal (21°C) in the
-    entire forecast window → indoor_buffer_ok, no pre-heat."""
-    target, rule = _decide(
-        outdoor_temp_c=7.0,
-        indoor_temp_c=22.0,
-        forecast_temps=[6.0, 4.0, 3.0, 5.0, 7.0],  # 5 hours, cold dip
-        hours_until_below_ideal=10.0,  # 10h > 5 forecast hours → stays above ideal
-    )
-    assert rule == "indoor_buffer_ok"
-    assert target == pytest.approx(21.0)
+    def test_heating_season_wrap_around_november(self) -> None:
+        """November is in heating season (Sep-Apr)."""
+        assert is_heating_season(11, 9, 4) is True
 
+    def test_heating_season_wrap_around_january(self) -> None:
+        """January is in heating season (Sep-Apr)."""
+        assert is_heating_season(1, 9, 4) is True
 
-# ---------------------------------------------------------------------------
-# T16 — Thermal model says indoor will drop below ideal → preheat
-# ---------------------------------------------------------------------------
+    def test_heating_season_wrap_around_april(self) -> None:
+        """April (end month) is in heating season (Sep-Apr)."""
+        assert is_heating_season(4, 9, 4) is True
 
-def test_t16_indoor_drops_below_ideal_preheats() -> None:
-    """Thermal model predicts indoor will drop below ideal within forecast
-    window → pre-heat is needed."""
-    target, rule = _decide(
-        outdoor_temp_c=7.0,
-        indoor_temp_c=21.5,
-        forecast_temps=[6.0, 4.0, 3.0, 2.0, 1.0, 3.0, 5.0, 7.0],  # 8 hours
-        hours_until_below_ideal=3.0,  # 3h < 8 forecast hours → will drop below ideal
-    )
-    assert rule == "preheat"
-    assert target == pytest.approx(21.5)
+    def test_heating_season_wrap_around_september(self) -> None:
+        """September (start month) is in heating season (Sep-Apr)."""
+        assert is_heating_season(9, 9, 4) is True
 
+    def test_not_heating_season_june(self) -> None:
+        """June is NOT in heating season (Sep-Apr)."""
+        assert is_heating_season(6, 9, 4) is False
 
-# ---------------------------------------------------------------------------
-# T17 — Thermal model not ready → preheat conservatively
-# ---------------------------------------------------------------------------
+    def test_not_heating_season_august(self) -> None:
+        """August is NOT in heating season (Sep-Apr)."""
+        assert is_heating_season(8, 9, 4) is False
 
-def test_t17_thermal_model_learning_preheats_conservatively() -> None:
-    """Thermal model is None (still learning) → preheat conservatively."""
-    target, rule = _decide(
-        outdoor_temp_c=6.0,
-        indoor_temp_c=22.0,
-        forecast_temps=[4.0, 2.0, 1.5],
-        hours_until_below_ideal=None,
-    )
-    assert rule == "preheat"
-    assert target == pytest.approx(21.5)
+    def test_same_start_end_single_month(self) -> None:
+        """Start=end means only that single month."""
+        assert is_heating_season(3, 3, 3) is True
+        assert is_heating_season(4, 3, 3) is False
+
+    def test_linear_range_jan_to_apr(self) -> None:
+        """Non-wrapping range Jan-Apr."""
+        assert is_heating_season(2, 1, 4) is True
+        assert is_heating_season(5, 1, 4) is False
 
 
-# ---------------------------------------------------------------------------
-# T18 — Indoor temp unknown → preheat as usual (conservative)
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Outside heating season — no solar action
+# ===========================================================================
 
-def test_t18_indoor_temp_unknown_preheats() -> None:
-    """No indoor temp sensor → preheat (conservative)."""
-    target, rule = _decide(
-        outdoor_temp_c=6.0,
-        indoor_temp_c=None,
-        forecast_temps=[4.0, 2.0, 1.5],
-        hours_until_below_ideal=None,
-    )
-    assert rule == "preheat"
-    assert target == pytest.approx(21.5)
+class TestOutsideHeatingSeasonNoAction:
+    """Tests that no action is taken outside heating season."""
+
+    def test_summer_no_action(self) -> None:
+        """June with solar surplus → no_solar_action (not heating season)."""
+        target, rule, boost = _decide(
+            current_month=6,
+            current_export_w=1000.0,
+        )
+        assert rule == "no_solar_action"
+        assert boost is False
+
+    def test_summer_preserves_current_setpoint(self) -> None:
+        """Outside heating season, current setpoint is preserved."""
+        target, rule, boost = _decide(
+            current_month=7,
+            current_setpoint=22.0,
+        )
+        assert rule == "no_solar_action"
+        assert target == pytest.approx(22.0)
 
 
-# ---------------------------------------------------------------------------
-# T19 — Boundary: hours_until_below_ideal exactly equals forecast hours
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Solar boost activation — surplus detected
+# ===========================================================================
 
-def test_t19_boundary_ideal_equals_forecast_hours() -> None:
-    """hours_until_below_ideal == len(forecast_temps) → skip preheat
-    (indoor stays above ideal through the entire window)."""
-    target, rule = _decide(
-        outdoor_temp_c=7.0,
-        indoor_temp_c=21.5,
-        forecast_temps=[6.0, 4.0, 3.0],  # 3 hours
-        hours_until_below_ideal=3.0,  # exactly matches → stays above ideal
-    )
-    assert rule == "indoor_buffer_ok"
-    assert target == pytest.approx(21.0)
+class TestSolarBoostActivation:
+    """Tests for activating solar boost when surplus is detected."""
+
+    def test_activate_on_surplus(self) -> None:
+        """Export > threshold → activate solar boost, setpoint = current_temp + delta."""
+        target, rule, boost = _decide(
+            current_export_w=700.0,
+            current_temperature=21.2,
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+        assert target == pytest.approx(21.2 + 0.5)
+
+    def test_no_activation_below_threshold(self) -> None:
+        """Export below threshold → no activation."""
+        target, rule, boost = _decide(
+            current_export_w=300.0,
+            current_temperature=21.0,
+        )
+        assert rule == "no_solar_action"
+        assert boost is False
+
+    def test_activation_clamps_to_ideal(self) -> None:
+        """If current_temp + delta < ideal, clamp to ideal."""
+        target, rule, boost = _decide(
+            current_export_w=700.0,
+            current_temperature=20.0,  # 20.0 + 0.5 = 20.5 < 21.0 ideal
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+        assert target >= 21.0
+
+    def test_activation_no_temp_sensor(self) -> None:
+        """No temperature sensor → use ideal + delta."""
+        target, rule, boost = _decide(
+            current_export_w=700.0,
+            current_temperature=None,
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+        assert target == pytest.approx(21.0 + 0.5)
+
+
+# ===========================================================================
+# Solar boost active — import checks
+# ===========================================================================
+
+class TestSolarBoostActiveImportChecks:
+    """Tests for behavior when solar boost is already active."""
+
+    def test_high_import_resets(self) -> None:
+        """5-min avg import > high threshold → reset to ideal, deactivate."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=900.0,
+            current_setpoint=23.0,
+        )
+        assert rule == "solar_reset"
+        assert boost is False
+        assert target == pytest.approx(21.0)
+
+    def test_moderate_import_steps_down(self) -> None:
+        """5-min avg import > low threshold → step setpoint down by delta."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,
+            current_setpoint=23.0,
+        )
+        assert rule == "solar_step_down"
+        assert boost is True
+        assert target == pytest.approx(23.0 - 0.5)
+
+    def test_step_down_clamps_to_ideal(self) -> None:
+        """Step-down that would go below ideal → deactivate boost."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,
+            current_setpoint=21.3,  # 21.3 - 0.5 = 20.8 < 21.0 → clamp to 21.0
+        )
+        assert rule == "solar_boost_deactivated"
+        assert boost is False
+        assert target == pytest.approx(21.0)
+
+    def test_step_down_exactly_at_ideal(self) -> None:
+        """Step-down that lands exactly on ideal → deactivate."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,
+            current_setpoint=21.5,  # 21.5 - 0.5 = 21.0 = ideal
+        )
+        assert rule == "solar_boost_deactivated"
+        assert boost is False
+        assert target == pytest.approx(21.0)
+
+    def test_no_excess_import_boosts(self) -> None:
+        """Low import → continue boosting (setpoint = current_temp + delta)."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=100.0,
+            current_temperature=22.0,
+            current_setpoint=22.5,
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+        assert target == pytest.approx(22.0 + 0.5)
+
+
+# ===========================================================================
+# Boundary: thresholds exactly matched
+# ===========================================================================
+
+class TestThresholdBoundaries:
+    """Tests for exact threshold boundary behavior."""
+
+    def test_export_exactly_at_threshold_no_activation(self) -> None:
+        """Export exactly at threshold → no activation (> not >=)."""
+        target, rule, boost = _decide(
+            current_export_w=500.0,  # not > 500
+        )
+        assert rule == "no_solar_action"
+        assert boost is False
+
+    def test_import_exactly_at_high_threshold_no_reset(self) -> None:
+        """Import exactly at high threshold → no reset (> not >=)."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=800.0,  # not > 800
+            current_temperature=22.0,
+        )
+        assert rule != "solar_reset"
+
+    def test_import_exactly_at_low_threshold_no_step_down(self) -> None:
+        """Import exactly at low threshold → no step down (> not >=)."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=300.0,  # not > 300
+            current_temperature=22.0,
+        )
+        assert rule == "solar_incremental"
+
+
+# ===========================================================================
+# Edge cases
+# ===========================================================================
+
+class TestEdgeCases:
+    """Edge case tests."""
+
+    def test_none_export_no_activation(self) -> None:
+        """Export is None → no activation."""
+        target, rule, boost = _decide(
+            current_export_w=None,
+        )
+        assert rule == "no_solar_action"
+        assert boost is False
+
+    def test_boost_active_none_setpoint(self) -> None:
+        """Boost active, no current setpoint → step-down uses ideal."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,
+            current_setpoint=None,
+        )
+        assert rule == "solar_boost_deactivated"
+        assert target == pytest.approx(21.0)
+
+    def test_custom_step_delta(self) -> None:
+        """Custom step delta is respected."""
+        target, rule, boost = _decide(
+            current_export_w=700.0,
+            current_temperature=21.0,
+            solar_step_delta=1.0,
+        )
+        assert rule == "solar_incremental"
+        assert target == pytest.approx(22.0)

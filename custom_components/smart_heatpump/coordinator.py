@@ -1,7 +1,8 @@
 """Coordinator for the Smart Heatpump Controller.
 
 Runs the evaluation loop on a configurable interval, reads sensors,
-calls the pure decide() function, and applies the result.
+calls the solar incremental decision logic, and applies the result.
+Thermal model ML learning continues independently.
 """
 
 from __future__ import annotations
@@ -26,11 +27,14 @@ from .const import (
     DOMAIN,
     RULE_DESCRIPTIONS,
 )
-from .decision import decide
+from .decision import decide_solar
 from .thermal_model import predict_hours_until_below
 from .thermal_store import ThermalStore
 
 _LOGGER = logging.getLogger(__name__)
+
+# How many seconds of import history to keep for the 5-minute rolling average
+_IMPORT_HISTORY_SECONDS = 300  # 5 minutes
 
 
 class SmartHeatpumpCoordinator:
@@ -46,21 +50,26 @@ class SmartHeatpumpCoordinator:
         # Switch entity pushes updates here
         self.notifications_enabled: bool = True
 
-        # Thermal learning
+        # Thermal learning (continues independently — not used for thermostat control)
         self.thermal_store = ThermalStore(hass, entry.entry_id)
 
         # Evaluation state
         self.active_rule: str = "initialising"
-        self.last_target: float | None = None  # Track computed setpoint (for dry run)
+        self.last_target: float | None = None  # Track computed setpoint
         self.hours_until_below_ideal: float | None = None
-        self._solar_surplus_since: datetime | None = None
-        self._solar_confirmed: bool = False  # Latched once confirmed
+        self._solar_boost_active: bool = False
         self._import_history: list[tuple[float, float]] = []  # [(timestamp, import_w)]
         self._cancel_timer: CALLBACK_TYPE | None = None
         self._listeners: list[callback] = []
 
         # Dry run — switch entity pushes updates here
         self.dry_run_enabled: bool = not self._opt(CONF_THERMOSTAT)
+
+        # Snapshot values for notifications / sensor attributes
+        self._last_avg_import_5min: float = 0.0
+        self._last_net_power: float | None = None
+        self._last_outdoor_temp: float | None = None
+        self._last_indoor_temp: float | None = None
 
     def _opt(self, key: str, default: str = "") -> str:
         """Read a config value from options (primary) or data (migration fallback)."""
@@ -154,32 +163,32 @@ class SmartHeatpumpCoordinator:
         )
 
     # ------------------------------------------------------------------
-    # Core evaluation
+    # Core evaluation — Solar Incremental Flow
     # ------------------------------------------------------------------
 
     async def async_evaluate(self) -> None:
-        """Read sensors, call decide(), apply result."""
+        """Read sensors, run solar incremental decision, apply result."""
         cfg = self.config_values
-        effective_horizon = cfg["forecast_horizon_hours"] + cfg["thermal_lag_hours"]
 
         # Read sensors
         outdoor_temp = self._read_outdoor_temp()
         indoor_temp = self._read_indoor_temp()
         net_power = self._read_net_power()
-        solar_surplus = max(0.0, -net_power) if net_power is not None else None
+        solar_export = max(0.0, -net_power) if net_power is not None else None
         grid_import = max(0.0, net_power) if net_power is not None else None
-        forecast_temps = await self._async_read_forecast_temps(effective_horizon)
-        forecast_recovery = await self._async_read_forecast_temps(
-            cfg["cop_recovery_horizon_hours"]
-        )
         forecast_solar = self._read_forecast_solar()
 
-        # Record thermal observation for learning
+        # Store snapshots for notification / sensor attributes
+        self._last_net_power = net_power
+        self._last_outdoor_temp = outdoor_temp
+        self._last_indoor_temp = indoor_temp
+
+        # ---- Thermal model learning (continues independently) ----
         now_utc = datetime.now(timezone.utc)
         if indoor_temp is not None and outdoor_temp is not None:
             heating_active = self._is_heating_active()
             solar_gain = self._is_solar_gain_likely(
-                solar_surplus=solar_surplus,
+                solar_surplus=solar_export,
                 forecast_solar=forecast_solar,
             )
             self.thermal_store.add_observation(
@@ -189,92 +198,89 @@ class SmartHeatpumpCoordinator:
                 heating_active=heating_active,
                 solar_gain_likely=solar_gain,
             )
-            # Save periodically (every evaluation cycle)
             await self.thermal_store.async_save()
 
-        # Thermal model prediction — hours until indoor drops below ideal
-        hours_until_below_ideal: float | None = None
+        # Thermal model prediction (informational — not used for control)
+        forecast_temps = await self._async_read_forecast_temps(24)
         if (
             self.thermal_store.loss_coefficient is not None
             and indoor_temp is not None
             and forecast_temps
         ):
-            hours_until_below_ideal = predict_hours_until_below(
+            self.hours_until_below_ideal = predict_hours_until_below(
                 indoor_temp_c=indoor_temp,
                 outdoor_temps=forecast_temps,
                 threshold_temp_c=cfg["temp_ideal"],
                 loss_coefficient_k=self.thermal_store.loss_coefficient,
             )
-        self.hours_until_below_ideal = hours_until_below_ideal
+        else:
+            self.hours_until_below_ideal = None
 
-        # Solar confirmation tracking
-        # Track grid import readings for 3-minute rolling average
+        # ---- 5-minute rolling import average ----
         now_ts = now_utc.timestamp()
         if grid_import is not None:
             self._import_history.append((now_ts, grid_import))
-        # Prune entries older than 3 minutes
-        cutoff_ts = now_ts - 180
+        cutoff_ts = now_ts - _IMPORT_HISTORY_SECONDS
         self._import_history = [
             (ts, w) for ts, w in self._import_history if ts >= cutoff_ts
         ]
-        # Stop solar boost when 3-minute average import exceeds threshold
         if self._import_history:
-            avg_import = sum(w for _, w in self._import_history) / len(
+            avg_import_5min = sum(w for _, w in self._import_history) / len(
                 self._import_history
             )
         else:
-            avg_import = 0.0
-        import_too_high = avg_import > cfg["solar_boost_stop_import"]
+            avg_import_5min = 0.0
+        self._last_avg_import_5min = avg_import_5min
 
-        if import_too_high:
-            # Stop: 3-min avg import exceeds threshold
-            self._solar_surplus_since = None
-            self._solar_confirmed = False
-        elif (
-            not self._solar_confirmed
-            and solar_surplus is not None
-            and solar_surplus >= cfg["solar_surplus_threshold"]
-        ):
-            # Start: surplus above threshold — track confirmation timer
-            if self._solar_surplus_since is None:
-                self._solar_surplus_since = now_utc
-            elapsed = (now_utc - self._solar_surplus_since).total_seconds() / 60.0
-            if elapsed >= cfg["solar_confirm_minutes"]:
-                self._solar_confirmed = True
+        # ---- Read current setpoint from thermostat ----
+        current_setpoint = self._read_current_setpoint()
 
-        solar_confirmed = self._solar_confirmed
+        # ---- Solar incremental decision ----
+        now_local = dt_util.now()
+        current_month = now_local.month
 
-        # Call pure decision function
-        target, rule = decide(
-            outdoor_temp_c=outdoor_temp,
-            indoor_temp_c=indoor_temp,
-            solar_surplus_w=solar_surplus,
-            solar_confirmed=solar_confirmed,
-            forecast_temps=forecast_temps,
-            forecast_recovery_temps=forecast_recovery,
+        target, rule, new_boost_active = decide_solar(
+            current_month=current_month,
+            solar_boost_active=self._solar_boost_active,
+            current_export_w=solar_export,
+            avg_import_5min_w=avg_import_5min,
+            current_temperature=indoor_temp,
+            current_setpoint=current_setpoint if not self.dry_run else self.last_target,
             temp_ideal=cfg["temp_ideal"],
-            temp_minimum=cfg["temp_minimum"],
-            temp_solar_boost=cfg["temp_solar_boost"],
-            preheat_delta=cfg["preheat_delta"],
-            cop_threshold_temp=cfg["cop_threshold_temp"],
             solar_surplus_threshold=cfg["solar_surplus_threshold"],
-            hours_until_below_ideal=hours_until_below_ideal,
+            solar_release_threshold_high=cfg["solar_release_threshold_high"],
+            solar_release_threshold_low=cfg["solar_release_threshold_low"],
+            solar_step_delta=cfg["solar_step_delta"],
+            season_start_month=int(cfg["solar_season_start_month"]),
+            season_end_month=int(cfg["solar_season_end_month"]),
         )
 
-        # Apply setpoint if changed
-        if self.dry_run:
-            # Dry run — compare against last computed target instead of thermostat
-            previous = self.last_target
-            setpoint_changed = previous is None or abs(target - previous) >= 0.1
+        prev_boost_active = self._solar_boost_active
+        self._solar_boost_active = new_boost_active
 
+        # Determine if we should apply a change
+        # Only act when the rule actually changes the thermostat
+        actionable_rules = {
+            "solar_incremental",
+            "solar_step_down",
+            "solar_reset",
+            "solar_boost_deactivated",
+        }
+        is_actionable = rule in actionable_rules
+
+        if self.dry_run:
+            previous = self.last_target
+            setpoint_changed = is_actionable and (
+                previous is None or abs(target - previous) >= 0.1
+            )
             if setpoint_changed:
                 _LOGGER.info(
-                    "DRY RUN — would set: %s -> %.1f°C | rule=%s | outdoor=%s°C | surplus=%sW",
+                    "DRY RUN — would set: %s -> %.1f°C | rule=%s | export=%sW | avg_import_5min=%.0fW",
                     previous,
                     target,
                     rule,
-                    outdoor_temp,
-                    solar_surplus,
+                    solar_export,
+                    avg_import_5min,
                 )
                 await self._async_send_notification(
                     old_setpoint=previous,
@@ -282,7 +288,8 @@ class SmartHeatpumpCoordinator:
                     rule=rule,
                     outdoor_temp=outdoor_temp,
                     indoor_temp=indoor_temp,
-                    solar_surplus=solar_surplus,
+                    net_power=net_power,
+                    avg_import_5min=avg_import_5min,
                 )
             else:
                 _LOGGER.debug(
@@ -291,20 +298,18 @@ class SmartHeatpumpCoordinator:
                     rule,
                 )
         else:
-            current_setpoint = self._read_current_setpoint()
-            setpoint_changed = (
+            setpoint_changed = is_actionable and (
                 current_setpoint is None or abs(target - current_setpoint) >= 0.1
             )
-
             if setpoint_changed:
                 await self._async_set_thermostat(target)
                 _LOGGER.info(
-                    "Setpoint change: %s -> %.1f°C | rule=%s | outdoor=%s°C | surplus=%sW",
+                    "Setpoint change: %s -> %.1f°C | rule=%s | export=%sW | avg_import_5min=%.0fW",
                     current_setpoint,
                     target,
                     rule,
-                    outdoor_temp,
-                    solar_surplus,
+                    solar_export,
+                    avg_import_5min,
                 )
                 await self._async_send_notification(
                     old_setpoint=current_setpoint,
@@ -312,14 +317,15 @@ class SmartHeatpumpCoordinator:
                     rule=rule,
                     outdoor_temp=outdoor_temp,
                     indoor_temp=indoor_temp,
-                    solar_surplus=solar_surplus,
+                    net_power=net_power,
+                    avg_import_5min=avg_import_5min,
                 )
             else:
                 _LOGGER.debug(
-                    "No change: setpoint=%.1f°C | rule=%s | outdoor=%s°C",
+                    "No change: setpoint=%.1f°C | rule=%s | export=%sW",
                     target,
                     rule,
-                    outdoor_temp,
+                    solar_export,
                 )
 
         self.last_target = target
@@ -331,11 +337,7 @@ class SmartHeatpumpCoordinator:
     # ------------------------------------------------------------------
 
     def _is_heating_active(self) -> bool:
-        """Check if the thermostat is currently calling for heat.
-
-        Reads the hvac_action attribute from the climate entity.
-        Returns False if no thermostat configured or attribute unavailable.
-        """
+        """Check if the thermostat is currently calling for heat."""
         entity_id = self._opt(CONF_THERMOSTAT)
         if not entity_id:
             return False
@@ -350,36 +352,19 @@ class SmartHeatpumpCoordinator:
         solar_surplus: float | None,
         forecast_solar: float | None,
     ) -> bool:
-        """Detect whether passive solar gain may be warming the house.
-
-        Solar gain inflates apparent insulation when the sun shines through
-        windows, but the heat dissipates quickly after sunset. We exclude
-        these periods from thermal learning to avoid overestimating insulation.
-
-        Returns True when any of these conditions hold:
-        - Solar panels are currently exporting (surplus > 0W)
-        - Forecast.Solar predicts significant production this hour
-        - It's daytime (sun is up) — conservative fallback when no solar
-          data is available
-        """
-        # Direct evidence: panels are producing / exporting
+        """Detect whether passive solar gain may be warming the house."""
         if solar_surplus is not None and solar_surplus > 0:
             return True
-
-        # Predicted production from Forecast.Solar
         if forecast_solar is not None and forecast_solar > 50:
             return True
-
-        # Fallback: use sun elevation from HA (if available)
         sun_state = self.hass.states.get("sun.sun")
         if sun_state is not None:
             elevation = sun_state.attributes.get("elevation", -90)
             try:
-                if float(elevation) > 5:  # Sun more than 5° above horizon
+                if float(elevation) > 5:
                     return True
             except (TypeError, ValueError):
                 pass
-
         return False
 
     def _read_outdoor_temp(self) -> float | None:
@@ -398,10 +383,7 @@ class SmartHeatpumpCoordinator:
             return None
 
     def _read_net_power(self) -> float | None:
-        """Read net grid power in watts.
-
-        Returns the raw P1 value: positive = importing, negative = exporting.
-        """
+        """Read net grid power in watts (positive=import, negative=export)."""
         entity_id = self._opt(CONF_P1_POWER)
         if not entity_id:
             return None
@@ -482,12 +464,7 @@ class SmartHeatpumpCoordinator:
             return None
 
     def _read_indoor_temp(self) -> float | None:
-        """Read indoor temperature from the optional temp sensor.
-
-        Falls back to the thermostat's current_temperature attribute
-        when no standalone sensor is configured.
-        """
-        # Try standalone temperature sensor first
+        """Read indoor temperature from optional sensor or thermostat fallback."""
         temp_entity = self._opt(CONF_TEMP_SENSOR)
         if temp_entity:
             state = self.hass.states.get(temp_entity)
@@ -498,7 +475,6 @@ class SmartHeatpumpCoordinator:
                     pass
             _LOGGER.warning("Temperature sensor '%s' unavailable", temp_entity)
 
-        # Fall back to thermostat's current_temperature
         therm_entity = self._opt(CONF_THERMOSTAT)
         if therm_entity:
             state = self.hass.states.get(therm_entity)
@@ -538,9 +514,10 @@ class SmartHeatpumpCoordinator:
         rule: str,
         outdoor_temp: float | None,
         indoor_temp: float | None,
-        solar_surplus: float | None,
+        net_power: float | None,
+        avg_import_5min: float,
     ) -> None:
-        """Send notification on setpoint change."""
+        """Send enriched notification on setpoint change."""
         if not self.notifications_enabled:
             return
 
@@ -548,20 +525,43 @@ class SmartHeatpumpCoordinator:
         if not targets:
             return
 
+        cfg = self.config_values
         description = RULE_DESCRIPTIONS.get(rule, rule)
+
+        # Format values
         outdoor_str = f"{outdoor_temp:.1f}°C" if outdoor_temp is not None else "N/A"
         indoor_str = f"{indoor_temp:.1f}°C" if indoor_temp is not None else "N/A"
-        surplus_str = f"{solar_surplus:.0f}W" if solar_surplus is not None else "N/A"
         old_str = f"{old_setpoint:.1f}°C" if old_setpoint is not None else "N/A"
+
+        # Current power: show as export or import
+        if net_power is not None:
+            if net_power < 0:
+                current_power_str = f"Export {abs(net_power):.0f}W"
+            else:
+                current_power_str = f"Import {net_power:.0f}W"
+        else:
+            current_power_str = "N/A"
+
+        # 5-min average: show as import
+        avg_str = f"Import {avg_import_5min:.0f}W"
 
         title = "Smart Heatpump"
         message = (
-            f"{description}\n\n"
-            f"Setpoint: {old_str} → {new_setpoint:.1f}°C\n"
-            f"Indoor: {indoor_str}\n"
+            f"{description}\n"
+            f"\n"
+            f"Rule: {rule}\n"
+            f"Room: {indoor_str}\n"
             f"Outdoor: {outdoor_str}\n"
-            f"Solar export: {surplus_str}\n"
-            f"Rule: {rule}"
+            f"Setpoint: {old_str} → {new_setpoint:.1f}°C\n"
+            f"\n"
+            f"Current power: {current_power_str}\n"
+            f"5-min avg: {avg_str}\n"
+            f"\n"
+            f"Thresholds:\n"
+            f"  Surplus activate: >{cfg['solar_surplus_threshold']:.0f}W export\n"
+            f"  Release high: >{cfg['solar_release_threshold_high']:.0f}W import\n"
+            f"  Release low: >{cfg['solar_release_threshold_low']:.0f}W import\n"
+            f"  Step delta: {cfg['solar_step_delta']:.1f}°C"
         )
 
         for target_name in targets:

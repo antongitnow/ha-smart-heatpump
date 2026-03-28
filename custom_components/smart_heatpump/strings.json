@@ -51,16 +51,13 @@
     "number": {
       "temp_ideal": { "name": "Ideal temperature" },
       "temp_minimum": { "name": "Minimum temperature" },
-      "temp_solar_boost": { "name": "Solar boost temperature" },
-      "preheat_delta": { "name": "Pre-heat delta" },
-      "cop_threshold_temp": { "name": "COP threshold temperature" },
-      "cop_recovery_horizon_hours": { "name": "COP recovery horizon" },
-      "solar_surplus_threshold": { "name": "Solar surplus threshold" },
-      "solar_confirm_minutes": { "name": "Solar confirmation delay" },
-      "forecast_horizon_hours": { "name": "Forecast horizon" },
-      "thermal_lag_hours": { "name": "Floor heating thermal lag" },
       "evaluation_interval_min": { "name": "Evaluation interval" },
-      "indoor_comfort_margin": { "name": "Indoor comfort margin" }
+      "solar_season_start_month": { "name": "Heating season start month" },
+      "solar_season_end_month": { "name": "Heating season end month" },
+      "solar_surplus_threshold": { "name": "Solar surplus threshold" },
+      "solar_release_threshold_high": { "name": "Solar release threshold high" },
+      "solar_release_threshold_low": { "name": "Solar release threshold low" },
+      "solar_step_delta": { "name": "Solar step delta" }
     },
     "sensor": {
       "active_rule": { "name": "Active rule" },

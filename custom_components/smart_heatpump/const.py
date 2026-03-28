@@ -20,16 +20,14 @@ CONF_NOTIFY_TARGETS = "notify_targets"
 DEFAULTS: dict[str, float] = {
     "temp_ideal": 21.0,
     "temp_minimum": 20.5,
-    "temp_solar_boost": 22.5,
-    "preheat_delta": 0.5,
-    "cop_threshold_temp": 5.0,
-    "cop_recovery_horizon_hours": 6.0,
+    "evaluation_interval_min": 5.0,
+    # Solar incremental flow
+    "solar_season_start_month": 9.0,   # September
+    "solar_season_end_month": 4.0,     # April
     "solar_surplus_threshold": 500.0,
-    "solar_confirm_minutes": 10.0,
-    "forecast_horizon_hours": 24.0,
-    "thermal_lag_hours": 3.0,
-    "evaluation_interval_min": 15.0,
-    "solar_boost_stop_import": 500.0,
+    "solar_release_threshold_high": 800.0,
+    "solar_release_threshold_low": 300.0,
+    "solar_step_delta": 0.5,
 }
 
 # ---------------------------------------------------------------------------
@@ -38,28 +36,26 @@ DEFAULTS: dict[str, float] = {
 NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]] = [
     ("temp_ideal", "Ideal temperature", 16, 26, 0.5, "°C", "mdi:thermometer"),
     ("temp_minimum", "Minimum temperature", 14, 24, 0.5, "°C", "mdi:thermometer-low"),
-    ("temp_solar_boost", "Solar boost temperature", 18, 26, 0.5, "°C", "mdi:solar-power"),
-    ("preheat_delta", "Pre-heat delta", 0, 2.0, 0.5, "°C", "mdi:thermometer-plus"),
-    ("cop_threshold_temp", "COP threshold temperature", -10, 15, 1.0, "°C", "mdi:heat-pump-outline"),
-    ("cop_recovery_horizon_hours", "COP recovery horizon", 1, 24, 1, "h", "mdi:clock-fast"),
-    ("solar_surplus_threshold", "Solar surplus threshold", 0, 5000, 100, "W", "mdi:solar-panel"),
-    ("solar_confirm_minutes", "Solar confirmation delay", 0, 60, 5, "min", "mdi:timer-outline"),
-    ("forecast_horizon_hours", "Forecast horizon", 1, 48, 1, "h", "mdi:weather-partly-cloudy"),
-    ("thermal_lag_hours", "Floor heating thermal lag", 0, 6, 0.5, "h", "mdi:floor-plan"),
-    ("evaluation_interval_min", "Evaluation interval", 5, 60, 5, "min", "mdi:refresh"),
-    ("solar_boost_stop_import", "Solar boost stop import", 0, 3000, 100, "W", "mdi:transmission-tower-import"),
+    ("evaluation_interval_min", "Evaluation interval", 1, 60, 1, "min", "mdi:refresh"),
+    ("solar_season_start_month", "Heating season start month", 1, 12, 1, "month", "mdi:calendar-start"),
+    ("solar_season_end_month", "Heating season end month", 1, 12, 1, "month", "mdi:calendar-end"),
+    ("solar_surplus_threshold", "Solar surplus threshold", 0, 5000, 50, "W", "mdi:solar-panel"),
+    ("solar_release_threshold_high", "Solar release threshold high", 0, 5000, 50, "W", "mdi:transmission-tower-import"),
+    ("solar_release_threshold_low", "Solar release threshold low", 0, 5000, 50, "W", "mdi:transmission-tower-import"),
+    ("solar_step_delta", "Solar step delta", 0.1, 3.0, 0.1, "°C", "mdi:thermometer-plus"),
 ]
 
 # ---------------------------------------------------------------------------
 # Human-readable rule descriptions for notifications
 # ---------------------------------------------------------------------------
 RULE_DESCRIPTIONS: dict[str, str] = {
-    "solar_boost": "Solar surplus detected — storing free energy as heat",
-    "preheat": "Cold period coming — pre-heating while COP is still efficient",
-    "conserve": "COP poor, no recovery expected — holding minimum temperature",
-    "conserve_await_recovery": "COP poor but recovery coming — waiting for efficient window",
+    "solar_incremental": "☀️ Solar surplus — boosting setpoint by step delta above current room temperature",
+    "solar_step_down": "⬇️ Moderate import detected — stepping setpoint down by step delta",
+    "solar_reset": "🔴 High import detected — resetting setpoint to ideal and deactivating boost",
+    "solar_boost_deactivated": "🔴 Setpoint reached ideal after step-down — deactivating solar boost",
+    "no_solar_action": "💤 Outside heating season or no surplus — no solar action",
+    "solar_boost_holding": "☀️ Solar boost active — holding current setpoint (no excess import)",
     "default": "Normal operation — maintaining ideal temperature",
-    "indoor_buffer_ok": "Indoor temperature sufficient — skipping pre-heat",
-    "error_fallback": "Error occurred — using safe fallback temperature",
+    "error_fallback": "⚠️ Error occurred — using safe fallback temperature",
     "initialising": "Controller starting up",
 }

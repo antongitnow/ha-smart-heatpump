@@ -68,13 +68,25 @@ class SmartHeatpumpRuleSensor(_BaseSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, str | float | None]:
-        rule = self._coordinator.active_rule
+        c = self._coordinator
+        rule = c.active_rule
         attrs: dict[str, str | float | None] = {
             "description": RULE_DESCRIPTIONS.get(rule, rule),
+            "solar_boost_active": c._solar_boost_active,
+            "computed_setpoint": c.last_target,
         }
-        if self._coordinator.dry_run:
+        if c.dry_run:
             attrs["mode"] = "dry_run"
-            attrs["computed_setpoint"] = self._coordinator.last_target
+        if c._last_net_power is not None:
+            if c._last_net_power < 0:
+                attrs["current_power"] = f"Export {abs(c._last_net_power):.0f}W"
+            else:
+                attrs["current_power"] = f"Import {c._last_net_power:.0f}W"
+        attrs["avg_import_5min_w"] = round(c._last_avg_import_5min, 0)
+        if c._last_indoor_temp is not None:
+            attrs["indoor_temp"] = c._last_indoor_temp
+        if c._last_outdoor_temp is not None:
+            attrs["outdoor_temp"] = c._last_outdoor_temp
         return attrs
 
 
@@ -108,9 +120,7 @@ class ThermalLearningSensor(_BaseSensor):
 
         if k is not None:
             attrs["loss_coefficient_k"] = round(k, 5)
-            # Human-readable: approximate °C drop per hour at 10°C delta
             attrs["approx_drop_per_hour_at_10c_delta"] = round(k * 10.0, 2)
-            # Insulation quality label
             if k <= 0.03:
                 quality = "excellent"
             elif k <= 0.05:
@@ -121,7 +131,6 @@ class ThermalLearningSensor(_BaseSensor):
                 quality = "poorly insulated"
             attrs["insulation_quality"] = quality
 
-        # Prediction — hours until indoor drops below ideal
         h = self._coordinator.hours_until_below_ideal
         if h is not None:
             if h == float("inf"):

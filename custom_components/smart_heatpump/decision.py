@@ -1,94 +1,118 @@
-"""Pure decision function for the Smart Heatpump Controller.
+"""Pure decision function for the Smart Heatpump Controller — Solar Incremental Flow.
 
 No Home Assistant dependency — can be unit tested with plain pytest.
 
-Decision priority (highest wins):
-  1. Solar surplus confirmed — actual export sustained above threshold
-  2. COP pre-heat: cold coming within horizon, COP still good now
-     — BUT skip if thermal model predicts indoor stays above ideal
-  3. COP conservation: COP poor now
-  4. Default: maintain ideal temperature
+This module implements the solar-incremental thermostat control:
+  - During heating season, when solar surplus is detected, boost setpoint
+    incrementally above current room temperature.
+  - When import rises, step down or reset.
+  - Thermal model ML learning continues independently (handled by coordinator).
 
-Safety floor (FR-08): setpoint is always >= temp_minimum regardless of rule.
+Safety floor: setpoint is always >= temp_ideal (never goes below comfort).
 """
 
 from __future__ import annotations
 
 
-def decide(
-    outdoor_temp_c: float | None,
-    indoor_temp_c: float | None,
-    solar_surplus_w: float | None,
-    solar_confirmed: bool,
-    forecast_temps: list[float],
-    forecast_recovery_temps: list[float],
+def is_heating_season(month: int, season_start: int, season_end: int) -> bool:
+    """Check if the given month falls within the heating season.
+
+    Heating season wraps around the year boundary, e.g. start=9 (Sep), end=4 (Apr)
+    means months 9,10,11,12,1,2,3,4 are heating season.
+    """
+    if season_start <= season_end:
+        # e.g. start=1, end=4 → Jan–Apr
+        return season_start <= month <= season_end
+    else:
+        # e.g. start=9, end=4 → Sep–Apr (wraps around year)
+        return month >= season_start or month <= season_end
+
+
+def decide_solar(
+    current_month: int,
+    solar_boost_active: bool,
+    current_export_w: float | None,
+    avg_import_5min_w: float,
+    current_temperature: float | None,
+    current_setpoint: float | None,
     temp_ideal: float,
-    temp_minimum: float,
-    temp_solar_boost: float,
-    preheat_delta: float,
-    cop_threshold_temp: float,
     solar_surplus_threshold: float,
-    hours_until_below_ideal: float | None = None,
-) -> tuple[float, str]:
-    """Decide the target thermostat setpoint and active rule name.
+    solar_release_threshold_high: float,
+    solar_release_threshold_low: float,
+    solar_step_delta: float,
+    season_start_month: int,
+    season_end_month: int,
+) -> tuple[float, str, bool]:
+    """Decide the target thermostat setpoint for the solar incremental flow.
 
     Args:
-        outdoor_temp_c: Current outdoor temperature (°C), or None if unavailable.
-        indoor_temp_c: Current indoor temperature (°C), or None if unavailable.
-        solar_surplus_w: Current solar export (W, >=0), or None if unavailable.
-        solar_confirmed: True when export sustained >= solar_confirm_minutes.
-        forecast_temps: Outdoor forecast temps up to effective preheat horizon.
-        forecast_recovery_temps: Outdoor forecast temps for COP recovery horizon.
-        temp_ideal: Default comfort setpoint (°C).
-        temp_minimum: Hard floor — setpoint never goes below this (°C).
-        temp_solar_boost: Setpoint during solar surplus (°C).
-        preheat_delta: Extra °C above ideal during pre-heat.
-        cop_threshold_temp: Outdoor temp below which COP is considered poor (°C).
-        solar_surplus_threshold: Minimum export (W) to count as surplus.
-        hours_until_below_ideal: Thermal model prediction — hours until indoor temp
-            drops below temp_ideal. None = model still learning (conservative).
+        current_month: Current month (1-12).
+        solar_boost_active: Whether solar boost is currently active.
+        current_export_w: Current real-time solar export in Watts (>=0), or None.
+        avg_import_5min_w: 5-minute rolling average of grid import in Watts (>=0).
+        current_temperature: Current room temperature in °C, or None.
+        current_setpoint: Current thermostat setpoint in °C, or None.
+        temp_ideal: Comfort setpoint / safety floor (°C).
+        solar_surplus_threshold: Min export (W) to activate solar boost.
+        solar_release_threshold_high: Import above which solar boost resets immediately.
+        solar_release_threshold_low: Import above which solar boost steps down.
+        solar_step_delta: °C to boost above current temp / step down per cycle.
+        season_start_month: First month of heating season (1-12).
+        season_end_month: Last month of heating season (1-12).
 
     Returns:
-        (target_temp, rule_name) where target_temp is clamped to >= temp_minimum.
+        (target_setpoint, rule_name, new_solar_boost_active)
     """
-    # Priority 1: Solar surplus — confirmed actual export only
-    if solar_confirmed:
-        return max(temp_solar_boost, temp_minimum), "solar_boost"
+    # Not heating season → no solar action
+    if not is_heating_season(current_month, season_start_month, season_end_month):
+        return (
+            current_setpoint if current_setpoint is not None else temp_ideal,
+            "no_solar_action",
+            False,
+        )
 
-    # If outdoor temp is unknown, fall back to ideal
-    if outdoor_temp_c is None:
-        return max(temp_ideal, temp_minimum), "default"
-
-    min_forecast_temp: float | None = min(forecast_temps) if forecast_temps else None
-    max_recovery_temp: float | None = (
-        max(forecast_recovery_temps) if forecast_recovery_temps else None
-    )
-
-    # Priority 2: COP pre-heat — cold coming, COP still good now
-    if (
-        min_forecast_temp is not None
-        and min_forecast_temp < cop_threshold_temp
-        and outdoor_temp_c > cop_threshold_temp
-    ):
-        # If thermal model predicts indoor temp will stay above ideal
-        # through the entire forecast window, skip pre-heating.
-        # Example: warm outside, well-insulated home — 21°C stays 21°C.
-        if hours_until_below_ideal is not None:
-            forecast_hours = len(forecast_temps)
-            if hours_until_below_ideal >= forecast_hours:
-                return max(temp_ideal, temp_minimum), "indoor_buffer_ok"
-
-        # No thermal data or indoor will drop below ideal — pre-heat
-        target = temp_ideal + preheat_delta
-        return max(target, temp_minimum), "preheat"
-
-    # Priority 3: COP conservation — COP poor now
-    if outdoor_temp_c <= cop_threshold_temp:
-        if max_recovery_temp is not None and max_recovery_temp >= cop_threshold_temp:
-            rule = "conserve_await_recovery"
+    # Branch: solar boost is NOT currently active
+    if not solar_boost_active:
+        # Check real-time export
+        if current_export_w is not None and current_export_w > solar_surplus_threshold:
+            # Activate solar boost
+            if current_temperature is not None:
+                target = current_temperature + solar_step_delta
+            else:
+                target = temp_ideal + solar_step_delta
+            target = max(target, temp_ideal)
+            return target, "solar_incremental", True
         else:
-            rule = "conserve"
-        return max(temp_minimum, temp_minimum), rule
+            # No surplus → no action
+            return (
+                current_setpoint if current_setpoint is not None else temp_ideal,
+                "no_solar_action",
+                False,
+            )
 
-    # Priority 4: Default
-    return max(temp_ideal, temp_minimum), "default"
+    # Branch: solar boost IS currently active
+    # Check high import → immediate reset
+    if avg_import_5min_w > solar_release_threshold_high:
+        return temp_ideal, "solar_reset", False
+
+    # Check moderate import → step down
+    if avg_import_5min_w > solar_release_threshold_low:
+        if current_setpoint is not None:
+            target = current_setpoint - solar_step_delta
+        else:
+            target = temp_ideal
+        target = max(target, temp_ideal)
+
+        # If stepped down to ideal, deactivate boost
+        if target <= temp_ideal:
+            return temp_ideal, "solar_boost_deactivated", False
+
+        return target, "solar_step_down", True
+
+    # No excess import — boost: set to current_temperature + delta
+    if current_temperature is not None:
+        target = current_temperature + solar_step_delta
+    else:
+        target = temp_ideal + solar_step_delta
+    target = max(target, temp_ideal)
+    return target, "solar_incremental", True
