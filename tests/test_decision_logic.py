@@ -231,7 +231,7 @@ class TestSolarBoostActiveImportChecks:
         assert target == pytest.approx(21.0)
 
     def test_no_excess_import_boosts(self) -> None:
-        """Low import → continue boosting (setpoint = current_temp + delta)."""
+        """Low import → continue boosting (setpoint = current_setpoint + delta)."""
         target, rule, boost = _decide(
             solar_boost_active=True,
             avg_import_5min_w=100.0,
@@ -240,7 +240,19 @@ class TestSolarBoostActiveImportChecks:
         )
         assert rule == "solar_incremental"
         assert boost is True
-        assert target == pytest.approx(22.0 + 0.5)
+        assert target == pytest.approx(22.5 + 0.5)
+
+    def test_boost_capped_at_1_degree_above_room(self) -> None:
+        """Setpoint cannot exceed current room temp + 1.0°C."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=100.0,
+            current_temperature=22.0,
+            current_setpoint=23.0,  # 23.0 + 0.5 = 23.5, but cap is 22.0 + 1.0 = 23.0
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+        assert target == pytest.approx(23.0)
 
 
 # ===========================================================================
@@ -264,6 +276,7 @@ class TestThresholdBoundaries:
             solar_boost_active=True,
             avg_import_5min_w=800.0,  # not > 800
             current_temperature=22.0,
+            current_setpoint=22.5,
         )
         assert rule != "solar_reset"
 
@@ -273,6 +286,7 @@ class TestThresholdBoundaries:
             solar_boost_active=True,
             avg_import_5min_w=300.0,  # not > 300
             current_temperature=22.0,
+            current_setpoint=22.5,
         )
         assert rule == "solar_incremental"
 

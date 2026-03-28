@@ -109,10 +109,15 @@ def decide_solar(
 
         return target, "solar_step_down", True
 
-    # No excess import — boost: set to current_temperature + delta
-    if current_temperature is not None:
+    # No excess import — boost: step up from current setpoint
+    # Cap at max 1.0°C above current room temperature
+    if current_setpoint is not None:
+        target = current_setpoint + solar_step_delta
+    elif current_temperature is not None:
         target = current_temperature + solar_step_delta
     else:
         target = temp_ideal + solar_step_delta
+    if current_temperature is not None:
+        target = min(target, current_temperature + 1.0)
     target = max(target, temp_ideal)
     return target, "solar_incremental", True

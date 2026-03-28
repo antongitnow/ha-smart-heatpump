@@ -43,7 +43,7 @@ flowchart TD
     MID_IMPORT -- Yes --> STEP_DOWN
     MID_IMPORT -- No --> SOLAR_ON
 
-    SOLAR_ON[/"solar_incremental<br/>setpoint = current_temperature<br/>+ step_delta °C"/]
+    SOLAR_ON[/"solar_incremental<br/>setpoint = current_setpoint<br/>+ step_delta °C<br/>(max room_temp + 1.0°C)"/]
 
     STEP_DOWN[/"solar_step_down<br/>setpoint = setpoint<br/>- step_delta °C<br/>(min = ideal temp)"/]
 
@@ -64,7 +64,7 @@ flowchart TD
 ### Key concepts
 
 - **Heating season** — the flow only runs during configurable months (default September–April). Outside these months, no thermostat changes are made.
-- **Incremental boost** — instead of jumping to a fixed boost temperature, the setpoint is set to `current_room_temperature + step_delta`. This tracks the actual room temperature and avoids overshooting.
+- **Incremental boost** — when solar boost first activates, the setpoint is set to `current_room_temperature + step_delta`. On each subsequent cycle with continued surplus, the setpoint steps up further from the *current setpoint* (not room temp). This means the setpoint climbs in steps: e.g. 21.5 → 22.0 → 22.5. The maximum boost is capped at **1.0°C above current room temperature** (two steps with the default 0.5°C delta), preventing overshooting.
 - **5-minute rolling average** — import thresholds use a 5-minute rolling average to avoid reacting to brief spikes (e.g. a kettle or oven).
 - **Two-tier release** — moderate import triggers a gradual step-down; high import triggers an immediate reset to ideal temperature.
 
@@ -72,9 +72,11 @@ flowchart TD
 
 > **10:00** — Solar panels start exporting 600W. Export exceeds the 500W threshold → `solar_incremental` activates. Room is 21.0°C, so setpoint goes to 21.5°C.
 >
-> **10:05** — Room is now 21.3°C. Still exporting. Setpoint → 21.8°C.
+> **10:05** — Still exporting surplus. Setpoint steps up from 21.5 → 22.0°C. Room is 21.1°C, cap is 21.1 + 1.0 = 22.1°C — still within cap.
 >
-> **10:30** — Room is 22.1°C. Cloud cover reduces production. 5-min average import rises to 400W (above 300W low threshold) → `solar_step_down`. Setpoint → 22.1°C - 0.5°C = 21.6°C.
+> **10:10** — Still exporting. Setpoint would go to 22.5°C, but room is 21.2°C, cap is 22.2°C → clamped to **22.2°C**. Maximum boost reached.
+>
+> **10:30** — Room is 22.0°C. Cloud cover reduces production. 5-min average import rises to 400W (above 300W low threshold) → `solar_step_down`. Setpoint → 22.2 - 0.5 = 21.7°C.
 >
 > **10:35** — Heavy cloud. 5-min average import rises to 900W (above 800W high threshold) → `solar_reset`. Setpoint → 21.0°C (ideal). Boost deactivated.
 >
