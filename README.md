@@ -28,7 +28,7 @@ flowchart TD
     BOOST_ACTIVE -- No --> EXPORT
     BOOST_ACTIVE -- Yes --> HIGH_IMPORT
 
-    EXPORT{"Real-time export<br/>> surplus threshold W?"}
+    EXPORT{"5-min avg export<br/>> surplus threshold W?"}
     EXPORT -- No --> DONE_SKIP
     EXPORT -- Yes --> ACTIVATE
 
@@ -65,12 +65,12 @@ flowchart TD
 
 - **Heating season** — the flow only runs during configurable months (default September–April). Outside these months, no thermostat changes are made.
 - **Incremental boost** — when solar boost first activates, the setpoint is set to `current_room_temperature + step_delta`. On each subsequent cycle with continued surplus, the setpoint steps up further from the *current setpoint* (not room temp). This means the setpoint climbs in steps: e.g. 21.5 → 22.0 → 22.5. The maximum boost is capped at **1.0°C above current room temperature** (two steps with the default 0.5°C delta), preventing overshooting.
-- **5-minute rolling average** — import thresholds use a 5-minute rolling average to avoid reacting to brief spikes (e.g. a kettle or oven).
+- **5-minute rolling average** — both activation (export) and release (import) thresholds use a 5-minute rolling average to avoid reacting to brief spikes (e.g. a kettle or oven).
 - **Two-tier release** — moderate import triggers a gradual step-down; high import triggers an immediate reset to ideal temperature.
 
 ### Real-world example
 
-> **10:00** — Solar panels start exporting 600W. Export exceeds the 500W threshold → `solar_incremental` activates. Room is 21.0°C, so setpoint goes to 21.5°C.
+> **10:00** — Solar panels exporting 600W on average over the last 5 minutes. Export exceeds the 300W threshold → `solar_incremental` activates. Room is 21.0°C, so setpoint goes to 21.5°C.
 >
 > **10:05** — Still exporting surplus. Setpoint steps up from 21.5 → 22.0°C. Room is 21.1°C, cap is 21.1 + 1.0 = 22.1°C — still within cap.
 >
@@ -78,7 +78,7 @@ flowchart TD
 >
 > **10:30** — Room is 22.0°C. Cloud cover reduces production. 5-min average import rises to 400W (above 300W low threshold) → `solar_step_down`. Setpoint → 22.2 - 0.5 = 21.7°C.
 >
-> **10:35** — Heavy cloud. 5-min average import rises to 900W (above 800W high threshold) → `solar_reset`. Setpoint → 21.0°C (ideal). Boost deactivated.
+> **10:35** — Heavy cloud. 5-min average import rises to 800W (above 700W high threshold) → `solar_reset`. Setpoint → 21.0°C (ideal). Boost deactivated.
 >
 > **10:40** — Sun returns, export is 700W → `solar_incremental` re-activates.
 
@@ -140,8 +140,8 @@ All parameters appear as slider entities under the **Smart Heatpump Controller**
 | Evaluation interval | 5 | 1–60 | min | How often the controller re-evaluates |
 | Heating season start month | 9 | 1–12 | month | First month of heating season (e.g. 9 = September) |
 | Heating season end month | 4 | 1–12 | month | Last month of heating season (e.g. 4 = April) |
-| Solar surplus threshold | 500 | 0–5000 | W | Minimum real-time export to activate solar boost |
-| Solar release threshold high | 800 | 0–5000 | W | 5-min avg import above which boost resets immediately |
+| Solar surplus threshold | 300 | 0–5000 | W | 5-min avg export above which solar boost activates |
+| Solar release threshold high | 700 | 0–5000 | W | 5-min avg import above which boost resets immediately |
 | Solar release threshold low | 300 | 0–5000 | W | 5-min avg import above which boost steps down |
 | Solar step delta | 0.5 | 0.1–3.0 | °C | How much to boost/step-down per cycle |
 
@@ -175,9 +175,9 @@ Use the **Notifications** switch on the device or dashboard to mute/unmute witho
 > 5-min avg: Import 0W
 >
 > Thresholds:
-> &nbsp;&nbsp;Surplus activate: >500W export
-> &nbsp;&nbsp;Release high: >800W import
-> &nbsp;&nbsp;Release low: >300W import
+> &nbsp;&nbsp;Surplus activate: >300W avg export
+> &nbsp;&nbsp;Release high: >700W avg import
+> &nbsp;&nbsp;Release low: >300W avg import
 > &nbsp;&nbsp;Step delta: 0.5°C
 
 ---

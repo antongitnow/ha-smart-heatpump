@@ -24,8 +24,8 @@ DEFAULTS: dict[str, float] = {
     # Solar incremental flow
     "solar_season_start_month": 9.0,   # September
     "solar_season_end_month": 4.0,     # April
-    "solar_surplus_threshold": 500.0,
-    "solar_release_threshold_high": 800.0,
+    "solar_surplus_threshold": 300.0,
+    "solar_release_threshold_high": 700.0,
     "solar_release_threshold_low": 300.0,
     "solar_step_delta": 0.5,
 }

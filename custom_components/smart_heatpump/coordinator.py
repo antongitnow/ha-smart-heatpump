@@ -59,6 +59,7 @@ class SmartHeatpumpCoordinator:
         self.hours_until_below_ideal: float | None = None
         self._solar_boost_active: bool = False
         self._import_history: list[tuple[float, float]] = []  # [(timestamp, import_w)]
+        self._export_history: list[tuple[float, float]] = []  # [(timestamp, export_w)]
         self._cancel_timer: CALLBACK_TYPE | None = None
         self._listeners: list[callback] = []
 
@@ -216,11 +217,12 @@ class SmartHeatpumpCoordinator:
         else:
             self.hours_until_below_ideal = None
 
-        # ---- 5-minute rolling import average ----
+        # ---- 5-minute rolling averages (import and export) ----
         now_ts = now_utc.timestamp()
+        cutoff_ts = now_ts - _IMPORT_HISTORY_SECONDS
+
         if grid_import is not None:
             self._import_history.append((now_ts, grid_import))
-        cutoff_ts = now_ts - _IMPORT_HISTORY_SECONDS
         self._import_history = [
             (ts, w) for ts, w in self._import_history if ts >= cutoff_ts
         ]
@@ -232,6 +234,18 @@ class SmartHeatpumpCoordinator:
             avg_import_5min = 0.0
         self._last_avg_import_5min = avg_import_5min
 
+        if solar_export is not None:
+            self._export_history.append((now_ts, solar_export))
+        self._export_history = [
+            (ts, w) for ts, w in self._export_history if ts >= cutoff_ts
+        ]
+        if self._export_history:
+            avg_export_5min = sum(w for _, w in self._export_history) / len(
+                self._export_history
+            )
+        else:
+            avg_export_5min = 0.0
+
         # ---- Read current setpoint from thermostat ----
         current_setpoint = self._read_current_setpoint()
 
@@ -242,7 +256,7 @@ class SmartHeatpumpCoordinator:
         target, rule, new_boost_active = decide_solar(
             current_month=current_month,
             solar_boost_active=self._solar_boost_active,
-            current_export_w=solar_export,
+            avg_export_5min_w=avg_export_5min,
             avg_import_5min_w=avg_import_5min,
             current_temperature=indoor_temp,
             current_setpoint=current_setpoint if not self.dry_run else self.last_target,

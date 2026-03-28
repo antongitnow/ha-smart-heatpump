@@ -40,8 +40,8 @@ is_heating_season = _module.is_heating_season
 
 DEFAULTS = dict(
     temp_ideal=21.0,
-    solar_surplus_threshold=500.0,
-    solar_release_threshold_high=800.0,
+    solar_surplus_threshold=300.0,
+    solar_release_threshold_high=700.0,
     solar_release_threshold_low=300.0,
     solar_step_delta=0.5,
     season_start_month=9,
@@ -54,7 +54,7 @@ def _decide(**overrides: object) -> tuple[float, str, bool]:
     kwargs = {
         "current_month": 11,  # November — heating season
         "solar_boost_active": False,
-        "current_export_w": 0.0,
+        "avg_export_5min_w": 0.0,
         "avg_import_5min_w": 0.0,
         "current_temperature": 21.0,
         "current_setpoint": 21.0,
@@ -117,7 +117,7 @@ class TestOutsideHeatingSeasonNoAction:
         """June with solar surplus → no_solar_action (not heating season)."""
         target, rule, boost = _decide(
             current_month=6,
-            current_export_w=1000.0,
+            avg_export_5min_w=1000.0,
         )
         assert rule == "no_solar_action"
         assert boost is False
@@ -142,7 +142,7 @@ class TestSolarBoostActivation:
     def test_activate_on_surplus(self) -> None:
         """Export > threshold → activate solar boost, setpoint = current_temp + delta."""
         target, rule, boost = _decide(
-            current_export_w=700.0,
+            avg_export_5min_w=700.0,
             current_temperature=21.2,
         )
         assert rule == "solar_incremental"
@@ -152,7 +152,7 @@ class TestSolarBoostActivation:
     def test_no_activation_below_threshold(self) -> None:
         """Export below threshold → no activation."""
         target, rule, boost = _decide(
-            current_export_w=300.0,
+            avg_export_5min_w=300.0,
             current_temperature=21.0,
         )
         assert rule == "no_solar_action"
@@ -161,7 +161,7 @@ class TestSolarBoostActivation:
     def test_activation_clamps_to_ideal(self) -> None:
         """If current_temp + delta < ideal, clamp to ideal."""
         target, rule, boost = _decide(
-            current_export_w=700.0,
+            avg_export_5min_w=700.0,
             current_temperature=20.0,  # 20.0 + 0.5 = 20.5 < 21.0 ideal
         )
         assert rule == "solar_incremental"
@@ -171,7 +171,7 @@ class TestSolarBoostActivation:
     def test_activation_no_temp_sensor(self) -> None:
         """No temperature sensor → use ideal + delta."""
         target, rule, boost = _decide(
-            current_export_w=700.0,
+            avg_export_5min_w=700.0,
             current_temperature=None,
         )
         assert rule == "solar_incremental"
@@ -265,7 +265,7 @@ class TestThresholdBoundaries:
     def test_export_exactly_at_threshold_no_activation(self) -> None:
         """Export exactly at threshold → no activation (> not >=)."""
         target, rule, boost = _decide(
-            current_export_w=500.0,  # not > 500
+            avg_export_5min_w=300.0,  # not > 300
         )
         assert rule == "no_solar_action"
         assert boost is False
@@ -274,7 +274,7 @@ class TestThresholdBoundaries:
         """Import exactly at high threshold → no reset (> not >=)."""
         target, rule, boost = _decide(
             solar_boost_active=True,
-            avg_import_5min_w=800.0,  # not > 800
+            avg_import_5min_w=700.0,  # not > 700
             current_temperature=22.0,
             current_setpoint=22.5,
         )
@@ -298,10 +298,10 @@ class TestThresholdBoundaries:
 class TestEdgeCases:
     """Edge case tests."""
 
-    def test_none_export_no_activation(self) -> None:
-        """Export is None → no activation."""
+    def test_zero_export_no_activation(self) -> None:
+        """Zero export → no activation."""
         target, rule, boost = _decide(
-            current_export_w=None,
+            avg_export_5min_w=0.0,
         )
         assert rule == "no_solar_action"
         assert boost is False
@@ -319,7 +319,7 @@ class TestEdgeCases:
     def test_custom_step_delta(self) -> None:
         """Custom step delta is respected."""
         target, rule, boost = _decide(
-            current_export_w=700.0,
+            avg_export_5min_w=700.0,
             current_temperature=21.0,
             solar_step_delta=1.0,
         )

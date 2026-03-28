@@ -31,7 +31,7 @@ def is_heating_season(month: int, season_start: int, season_end: int) -> bool:
 def decide_solar(
     current_month: int,
     solar_boost_active: bool,
-    current_export_w: float | None,
+    avg_export_5min_w: float,
     avg_import_5min_w: float,
     current_temperature: float | None,
     current_setpoint: float | None,
@@ -48,14 +48,14 @@ def decide_solar(
     Args:
         current_month: Current month (1-12).
         solar_boost_active: Whether solar boost is currently active.
-        current_export_w: Current real-time solar export in Watts (>=0), or None.
+        avg_export_5min_w: 5-minute rolling average of solar export in Watts (>=0).
         avg_import_5min_w: 5-minute rolling average of grid import in Watts (>=0).
         current_temperature: Current room temperature in °C, or None.
         current_setpoint: Current thermostat setpoint in °C, or None.
         temp_ideal: Comfort setpoint / safety floor (°C).
-        solar_surplus_threshold: Min export (W) to activate solar boost.
-        solar_release_threshold_high: Import above which solar boost resets immediately.
-        solar_release_threshold_low: Import above which solar boost steps down.
+        solar_surplus_threshold: Min 5-min avg export (W) to activate solar boost.
+        solar_release_threshold_high: 5-min avg import above which boost resets immediately.
+        solar_release_threshold_low: 5-min avg import above which boost steps down.
         solar_step_delta: °C to boost above current temp / step down per cycle.
         season_start_month: First month of heating season (1-12).
         season_end_month: Last month of heating season (1-12).
@@ -73,8 +73,8 @@ def decide_solar(
 
     # Branch: solar boost is NOT currently active
     if not solar_boost_active:
-        # Check real-time export
-        if current_export_w is not None and current_export_w > solar_surplus_threshold:
+        # Check 5-min average export
+        if avg_export_5min_w > solar_surplus_threshold:
             # Activate solar boost
             if current_temperature is not None:
                 target = current_temperature + solar_step_delta
