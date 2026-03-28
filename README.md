@@ -1,17 +1,12 @@
 # Smart Heatpump Controller for Home Assistant
 
-An intelligent thermostat controller that optimises heat pump operation based on real-time COP (Coefficient of Performance), solar surplus, and weather forecast. It adjusts your thermostat setpoint automatically — no direct heat pump API required. All logic runs locally with no cloud dependency.
+An intelligent thermostat controller that uses solar surplus to store free energy as heat in your floor. It adjusts your thermostat setpoint automatically — no direct heat pump API required. All logic runs locally with no cloud dependency.
 
 ---
 
 ## What it does
 
-The controller watches your outdoor temperature, solar production, and weather forecast, then adjusts your thermostat setpoint to minimise grid energy use for heating:
-
-- **Solar boost** — when your solar panels export excess electricity, it raises the setpoint to store that free energy as heat in your floor.
-- **COP-aware pre-heating** — it checks the forecast and pre-heats your home while the heat pump is still efficient, before a cold period arrives.
-- **Conservation mode** — when COP is poor (cold outside), it reduces heating to the minimum and waits for the next efficient window.
-- **Floor heating lag** — it accounts for the 2–4 hour delay of floor heating systems by looking further ahead in the forecast.
+During the heating season, the controller watches your solar export in real time. When you're exporting more than you need, it incrementally raises the thermostat setpoint to store that free solar energy as heat in your floor mass. When the sun disappears and you start importing, it steps the setpoint back down — or resets immediately on high import.
 
 Your temperature stays within a comfort band you define, without manual intervention.
 
@@ -19,130 +14,83 @@ Your temperature stays within a comfort band you define, without manual interven
 
 ## How it works
 
-The controller combines three inputs — **solar production**, **weather forecast**, and **indoor temperature** — to pick the most energy-efficient setpoint every evaluation cycle (default: 15 minutes).
-
-### Decision tree
-
-Rules are evaluated top-to-bottom. The first match wins.
+The controller runs every 5 minutes (configurable) and follows this decision flow:
 
 ```mermaid
 flowchart TD
-    START([Every 15 min]) --> SOLAR{Solar surplus<br/>confirmed?}
-    SOLAR -- Yes --> BOOST["solar_boost<br/>Setpoint → solar boost temp"]
-    SOLAR -- No --> OUTDOOR{Outdoor temp<br/>known?}
-    OUTDOOR -- No --> DEFAULT1["default<br/>Setpoint → ideal temp"]
-    OUTDOOR -- Yes --> FORECAST{Cold period<br/>coming?}
-    FORECAST -- No --> COPNOW{COP poor<br/>right now?}
-    FORECAST -- Yes --> COPGOOD{COP still<br/>good now?}
-    COPGOOD -- No --> COPNOW
-    COPGOOD -- Yes --> IDEALCHECK{Thermal model:<br/>will indoor stay<br/>above ideal temp?}
-    IDEALCHECK -- Yes --> SKIP["indoor_buffer_ok<br/>Setpoint → ideal temp"]
-    IDEALCHECK -- "No / unknown" --> PREHEAT["preheat<br/>Setpoint → ideal + delta"]
-    COPNOW -- No --> DEFAULT2["default<br/>Setpoint → ideal temp"]
-    COPNOW -- Yes --> RECOVERY{Recovery<br/>expected?}
-    RECOVERY -- Yes --> AWAIT["conserve_await_recovery<br/>Setpoint → minimum temp"]
-    RECOVERY -- No --> CONSERVE["conserve<br/>Setpoint → minimum temp"]
+    START([Every 5 min]) --> SEASON
 
+    SEASON{"Heating season?<br/>month >= start_month<br/>OR month <= end_month"}
+    SEASON -- No --> DONE_SKIP[/No solar action/]
+    SEASON -- Yes --> BOOST_ACTIVE
+
+    BOOST_ACTIVE{Solar boost<br/>currently active?}
+    BOOST_ACTIVE -- No --> EXPORT
+    BOOST_ACTIVE -- Yes --> HIGH_IMPORT
+
+    EXPORT{"Real-time export<br/>> surplus threshold W?"}
+    EXPORT -- No --> DONE_SKIP
+    EXPORT -- Yes --> ACTIVATE
+
+    ACTIVATE[Activate solar boost] --> SOLAR_ON
+
+    HIGH_IMPORT{"5-min avg import<br/>> release threshold high W?"}
+    HIGH_IMPORT -- Yes --> RESET_NOW
+
+    HIGH_IMPORT -- No --> MID_IMPORT
+
+    MID_IMPORT{"5-min avg import<br/>> release threshold low W?"}
+    MID_IMPORT -- Yes --> STEP_DOWN
+    MID_IMPORT -- No --> SOLAR_ON
+
+    SOLAR_ON[/"solar_incremental<br/>setpoint = current_temperature<br/>+ step_delta °C"/]
+
+    STEP_DOWN[/"solar_step_down<br/>setpoint = setpoint<br/>- step_delta °C<br/>(min = ideal temp)"/]
+
+    RESET_NOW[/"solar_reset<br/>setpoint = ideal temp<br/>Deactivate boost"/]
+
+    SOLAR_ON --> DONE
+    STEP_DOWN --> DEACT_CHECK
+    RESET_NOW --> DONE
+    DONE_SKIP --> DONE
+
+    DEACT_CHECK{"setpoint reached<br/>ideal temp?"}
+    DEACT_CHECK -- Yes --> DEACTIVATE[Deactivate boost] --> DONE
+    DEACT_CHECK -- No --> DONE
+
+    DONE([Done — next cycle in 5 min])
 ```
 
-### What is COP and why it matters
+### Key concepts
 
-**COP** (Coefficient of Performance) measures how efficiently a heat pump converts electricity into heat. At 10°C outside, a typical heat pump produces ~4 kWh of heat per 1 kWh of electricity (COP = 4). At −5°C, that drops to ~2 (COP = 2). Below a certain outdoor temperature, running the heat pump costs nearly as much as a direct electric heater.
+- **Heating season** — the flow only runs during configurable months (default September–April). Outside these months, no thermostat changes are made.
+- **Incremental boost** — instead of jumping to a fixed boost temperature, the setpoint is set to `current_room_temperature + step_delta`. This tracks the actual room temperature and avoids overshooting.
+- **5-minute rolling average** — import thresholds use a 5-minute rolling average to avoid reacting to brief spikes (e.g. a kettle or oven).
+- **Two-tier release** — moderate import triggers a gradual step-down; high import triggers an immediate reset to ideal temperature.
 
-The **COP threshold** (default 5°C) is the point where your heat pump's efficiency drops enough that it's smarter to wait for warmer weather. The controller uses this to decide when to conserve versus pre-heat.
+### Real-world example
 
-### How forecasting works
+> **10:00** — Solar panels start exporting 600W. Export exceeds the 500W threshold → `solar_incremental` activates. Room is 21.0°C, so setpoint goes to 21.5°C.
+>
+> **10:05** — Room is now 21.3°C. Still exporting. Setpoint → 21.8°C.
+>
+> **10:30** — Room is 22.1°C. Cloud cover reduces production. 5-min average import rises to 400W (above 300W low threshold) → `solar_step_down`. Setpoint → 22.1°C - 0.5°C = 21.6°C.
+>
+> **10:35** — Heavy cloud. 5-min average import rises to 900W (above 800W high threshold) → `solar_reset`. Setpoint → 21.0°C (ideal). Boost deactivated.
+>
+> **10:40** — Sun returns, export is 700W → `solar_incremental` re-activates.
 
-The controller uses your Home Assistant weather entity (default: Met.no via `weather.home`) to look ahead:
+---
 
-1. **Effective forecast horizon** = forecast horizon + floor heating thermal lag. With defaults (24h + 3h = 27h), the controller looks 27 hours ahead.
-2. It checks if outdoor temperature will drop **below** the COP threshold within this window.
-3. If yes, and it's currently warm enough for efficient operation, it **pre-heats** — storing energy in your floor while the heat pump is still efficient.
-4. If outdoor temperature is already below the COP threshold, it checks the **COP recovery horizon** (default 6h) to see if warmer weather is coming.
+## Thermal learning system
 
-**Solar boost** activates only when actual export is confirmed — the P1 sensor must show sustained export above the **solar surplus threshold** (default 500W) for at least the **solar confirmation delay** (default 10 minutes). Once active, boost **stays on** as long as there is no net import, even if export drops below 500W — the heat pump is already running, so it makes sense to keep using free solar energy. The boost stops when the **3-minute rolling average** of grid import exceeds the **solar boost stop import** threshold (default 500W). Using a rolling average for the stop threshold avoids stopping on brief import spikes (e.g. a kettle switching on).
+The controller includes a thermal learning model that continuously learns your home's insulation characteristics. It observes indoor/outdoor temperatures during periods when heating is off (primarily nighttime cool-downs), calculates a heat loss coefficient, and can predict how many hours until your indoor temperature drops below the ideal.
 
-### Thermal learning system
-
-Without thermal data, the controller pre-heats conservatively — any forecast cold period triggers pre-heating. For a well-insulated home, this is often unnecessary.
-
-The thermal learning system fixes this by learning how fast your home cools down:
-
-```mermaid
-flowchart LR
-    subgraph Phase 1 — Learning
-        direction TB
-        OBSERVE["Observe indoor temp<br/>every 15 min"]
-        FILTER["Filter: exclude heating<br/>and solar gain periods"]
-        COOLDOWN["Detect clean cool-down<br/>periods (night only)"]
-        RATE["Calculate heat loss rate<br/>(°C/hour at given ΔT)"]
-        STORE["Store observations<br/>over 3–7 days"]
-        OBSERVE --> FILTER --> COOLDOWN --> RATE --> STORE
-    end
-
-    subgraph Phase 2 — Predicting
-        direction TB
-        CURRENT["Current indoor temp"]
-        FORECAST2["Weather forecast"]
-        MODEL["Thermal model:<br/>hours until below ideal"]
-        DECIDE["Skip or pre-heat?"]
-        CURRENT --> MODEL
-        FORECAST2 --> MODEL
-        MODEL --> DECIDE
-    end
-
-    STORE --> MODEL
-```
-
-**Phase 1 — Learning (first 3–7 days):**
-- The controller watches indoor temperature trends during periods when heating is off.
-- It calculates the **heat loss coefficient** — how many °C per hour your home loses at a given indoor-outdoor temperature difference.
-- A well-insulated home might lose 0.3°C/hour at ΔT = 15°C. A poorly insulated home might lose 1.0°C/hour.
-
-**Phase 2 — Predicting:**
-- Given the current indoor temperature and the weather forecast, the model predicts **how many hours until indoor temperature drops below the ideal temperature**.
-- If that's longer than the entire forecast window, it skips pre-heating entirely — the house simply won't cool down enough to need it.
-- If the model predicts the indoor temperature will drop below ideal, it pre-heats as normal.
-
-**During learning:** the controller behaves conservatively (always pre-heats). Once enough data is collected, it becomes smarter and avoids unnecessary heating — especially in well-insulated homes.
+This learning runs **independently** — it does not control the thermostat. The data is exposed via the **Thermal learning** sensor for your information and can be used in future automations.
 
 ### Solar gain filtering
 
-Passive solar gain — sunlight warming your house through windows — can mislead the thermal model. On a sunny winter day, indoor temperature drops slowly even with heating off. The model would conclude "this home is very well insulated" and later skip pre-heating. But that warmth was shallow (heated air and furniture, not the floor mass) and disappears quickly after sunset.
-
-To prevent this, the learning system **excludes observations where solar gain is likely**:
-
-| Signal | How it's detected |
-|---|---|
-| Solar panels producing | P1 sensor shows export (surplus > 0W) |
-| Forecast.Solar active | Predicted production > 50W this hour |
-| Sun above horizon | `sun.sun` entity shows elevation > 5° |
-
-In practice this means the model primarily learns from **nighttime cool-downs** — when there's no solar influence and the observed heat loss is purely from insulation and thermal mass. This produces a conservative (higher) heat loss coefficient, which is exactly what you want: the model won't overestimate your home's ability to hold heat.
-
-### Indoor temperature awareness
-
-The controller uses indoor temperature in two ways:
-
-1. **Ideal temp check** — if the thermal model predicts indoor temperature will stay above the ideal temperature (e.g. 21°C) through the entire forecast window, pre-heating is skipped entirely. This handles cases where the house simply won't cool down enough — for example because it stays mild outside, or because the home is very well insulated.
-2. **Setpoint floor** — the setpoint never goes below `temp_minimum`, regardless of which rule is active.
-
-### Real-world scenarios
-
-**Scenario 1 — Sunny winter day (8°C, solar panels producing)**
-> Solar panels export 800W. After 10 minutes sustained export, `solar_boost` activates. Setpoint rises to 22.5°C, storing free solar energy as heat in the floor for the cold evening ahead. Grid cost: €0.
-
-**Scenario 2 — Late afternoon, cold night forecast (7°C now, forecast −2°C overnight)**
-> It's above the COP threshold now (COP ≈ 3.5), but tonight it won't be. The thermal model predicts your well-insulated home will stay above 21°C for the entire forecast window. `indoor_buffer_ok` — the house won't cool down enough to need pre-heating.
-
-**Scenario 3 — Same forecast, but poorly insulated home**
-> Same weather, but the thermal model predicts indoor temperature will drop below 21°C within 4 hours. `preheat` activates — setpoint rises to 21.5°C while the heat pump is still efficient (COP ≈ 3.5 vs. COP ≈ 1.8 at −2°C).
-
-**Scenario 4 — Cold snap (−3°C, no recovery in 6 hours)**
-> COP is poor (~1.8). Forecast shows no improvement within 6 hours. `conserve` — setpoint drops to 20.5°C minimum. The controller waits rather than running the heat pump inefficiently.
-
-**Scenario 5 — Cold but warming up (−1°C now, forecast 7°C in 4 hours)**
-> COP is poor, but recovery is coming. `conserve_await_recovery` — hold minimum temperature for a few hours, then resume normal heating when COP improves. Saves running the heat pump during the least efficient window.
+The thermal model excludes observations where solar gain is likely (solar export detected, Forecast.Solar predicting production, or sun above 5° elevation). This ensures the model learns from clean nighttime cool-downs and produces a conservative heat loss estimate.
 
 ---
 
@@ -162,17 +110,14 @@ The controller uses indoor temperature in two ways:
 2. Click **+ Add integration** (bottom right).
 3. Search for **Smart Heatpump Controller**.
 4. Fill in the form:
-   - **Thermostat** — the climate entity for your heat pump. *Leave empty for dry run mode* (see below).
-   - **Indoor temperature sensor** — optional standalone sensor. If omitted, the thermostat's built-in temperature is used.
-   - **Power sensor** — your smart meter / P1 sensor (W).
+   - **Power sensor** — your smart meter / P1 sensor (W). Must return negative values when exporting.
    - **Weather entity** — defaults to `weather.home` (Met.no).
-5. Click **Submit**. Done.
-
-That's it. The controller is running. All parameters have sensible defaults and can be adjusted from the dashboard.
+5. Click **Submit**.
+6. Go to **Configure** to add your thermostat, indoor temperature sensor, and notification targets.
 
 ### Dry run mode
 
-Leave the thermostat field empty during setup. The controller runs normally — reads sensors, evaluates rules, logs decisions, and sends notifications — but does not touch any thermostat. The **Active rule** sensor shows a `mode: dry_run` attribute and the computed setpoint it *would* have set. Use this to verify behaviour before connecting your heat pump.
+Leave the thermostat field empty during setup. The controller runs normally — reads sensors, evaluates rules, logs decisions, and sends notifications — but does not touch any thermostat. The **Active rule** sensor shows a `mode: dry_run` attribute and the computed setpoint it *would* have set.
 
 ### Step 3 — Add the dashboard card (optional)
 
@@ -180,34 +125,29 @@ Leave the thermostat field empty during setup. The controller runs normally — 
 2. Paste the contents of [`lovelace/dashboard_card.yaml`](lovelace/dashboard_card.yaml).
 3. Click **Save**.
 
-This gives you sliders for all parameters (ideal temperature, COP threshold, solar surplus threshold, etc.) and a status display showing the active rule.
-
 ---
 
 ## Configuration
 
-All parameters appear as slider entities under the **Smart Heatpump Controller** device in **Settings → Devices & services**. They are also usable on any dashboard card.
+All parameters appear as slider entities under the **Smart Heatpump Controller** device.
 
 | Parameter | Default | Range | Unit | Description |
 |---|---|---|---|---|
-| Ideal temperature | 21.0 | 16–26 | °C | Default comfort setpoint |
+| Ideal temperature | 21.0 | 16–26 | °C | Default comfort setpoint and safety floor |
 | Minimum temperature | 20.5 | 14–24 | °C | Hard floor — setpoint never goes below this |
-| Solar boost temperature | 22.5 | 18–26 | °C | Setpoint during solar surplus |
-| Pre-heat delta | 0.5 | 0–2 | °C | Extra °C above ideal when pre-heating |
-| COP threshold temperature | 5.0 | -10–15 | °C | Outdoor temp below which COP is considered poor |
-| COP recovery horizon | 6 | 1–24 | h | Hours ahead to look for COP recovery |
-| Solar surplus threshold | 500 | 0–5000 | W | Minimum export to trigger solar boost |
-| Solar confirmation delay | 10 | 0–60 | min | Export must be sustained this long before boost |
-| Forecast horizon | 24 | 1–48 | h | How far ahead to check for cold periods |
-| Floor heating thermal lag | 3 | 0–6 | h | Floor heating warm-up lag |
-| Evaluation interval | 15 | 5–60 | min | How often the controller re-evaluates |
-| Solar boost stop import | 500 | 0–3000 | W | 3-min average grid import above which solar boost stops |
+| Evaluation interval | 5 | 1–60 | min | How often the controller re-evaluates |
+| Heating season start month | 9 | 1–12 | month | First month of heating season (e.g. 9 = September) |
+| Heating season end month | 4 | 1–12 | month | Last month of heating season (e.g. 4 = April) |
+| Solar surplus threshold | 500 | 0–5000 | W | Minimum real-time export to activate solar boost |
+| Solar release threshold high | 800 | 0–5000 | W | 5-min avg import above which boost resets immediately |
+| Solar release threshold low | 300 | 0–5000 | W | 5-min avg import above which boost steps down |
+| Solar step delta | 0.5 | 0.1–3.0 | °C | How much to boost/step-down per cycle |
 
 ---
 
 ## Notifications
 
-The controller can send a push notification every time it changes the thermostat setpoint.
+The controller sends a push notification every time it changes the thermostat setpoint.
 
 1. Go to **Settings → Devices & services → Smart Heatpump Controller → Configure**.
 2. In the **Notification targets** field, enter your notify service names (comma-separated, without the `notify.` prefix):
@@ -222,13 +162,21 @@ Use the **Notifications** switch on the device or dashboard to mute/unmute witho
 
 > **Smart Heatpump**
 >
-> Cold period coming — pre-heating while COP is still efficient
+> ☀️ Solar surplus — boosting setpoint by step delta above current room temperature
 >
-> Setpoint: 21.0°C → 21.5°C
-> Indoor: 21.2°C
+> Rule: solar_incremental
+> Room: 21.2°C
 > Outdoor: 6.2°C
-> Solar export: 0W
-> Rule: preheat
+> Setpoint: 21.0°C → 21.7°C
+>
+> Current power: Export 680W
+> 5-min avg: Import 0W
+>
+> Thresholds:
+> &nbsp;&nbsp;Surplus activate: >500W export
+> &nbsp;&nbsp;Release high: >800W import
+> &nbsp;&nbsp;Release low: >300W import
+> &nbsp;&nbsp;Step delta: 0.5°C
 
 ---
 
@@ -249,14 +197,22 @@ The **Active rule** sensor shows the controller's current decision:
 
 | Rule | Meaning |
 |---|---|
-| `solar_boost` | Confirmed solar export — storing free energy as heat |
-| `preheat` | Cold period coming — pre-heating while COP is still efficient |
-| `indoor_buffer_ok` | Indoor temp will stay above ideal through forecast — skipping pre-heat |
-| `conserve` | COP poor, no recovery expected — holding minimum temperature |
-| `conserve_await_recovery` | COP poor, but recovery coming — waiting for efficient window |
+| `solar_incremental` | Solar surplus detected — boosting setpoint incrementally |
+| `solar_step_down` | Moderate import — stepping setpoint down by step delta |
+| `solar_reset` | High import — resetting setpoint to ideal and deactivating boost |
+| `solar_boost_deactivated` | Setpoint reached ideal after step-down — boost deactivated |
+| `solar_boost_holding` | Solar boost active, holding current setpoint |
+| `no_solar_action` | Outside heating season or no surplus — no action |
 | `default` | Normal operation — maintaining ideal temperature |
 | `error_fallback` | Error occurred — using safe fallback temperature |
 | `initialising` | Controller starting up |
+
+The sensor also exposes these attributes:
+- `solar_boost_active` — whether the solar boost is currently active
+- `computed_setpoint` — the setpoint the controller computed
+- `current_power` — current import/export reading
+- `avg_import_5min_w` — 5-minute rolling average import
+- `indoor_temp` / `outdoor_temp` — latest readings
 
 ---
 
@@ -271,23 +227,14 @@ The **Active rule** sensor shows the controller's current decision:
 ### Solar boost not triggering
 
 - Your power sensor must return **negative values** when exporting. Check in **Settings → Developer tools → States**.
-- Export must exceed the **Solar surplus threshold** for the **Solar confirmation delay** continuously.
+- Real-time export must exceed the **Solar surplus threshold**.
+- Verify you are within the configured **heating season** months.
 
-### Pre-heat not triggering
+### Solar boost stops too quickly
 
-- Outdoor temperature must be **above** the COP threshold for pre-heat to activate.
-- The forecast must show temperatures dropping **below** the COP threshold within the effective horizon.
-
----
-
-## Roadmap
-
-**Planned:**
-
-- **Dynamic electricity tariff optimisation** — integrate with real-time electricity prices (ENTSO-E, Tibber) to shift heating to low-price windows.
-- **Multi-zone support** — control multiple thermostats with per-zone configuration.
-- **Occupancy / presence setback** — reduce setpoint when no one is home.
-- **Energy savings estimate in notifications** — include estimated kWh/€ saved.
+- Lower the **Solar release threshold low** to tolerate more import before stepping down.
+- Lower the **Solar release threshold high** to tolerate more import before resetting.
+- The 5-minute rolling average smooths out brief spikes. If you see false resets from short-lived import (e.g. kettle), the average should handle it.
 
 ---
 
@@ -296,7 +243,7 @@ The **Active rule** sensor shows the controller's current decision:
 Pull requests and issues are welcome. Please open an issue first to discuss significant changes.
 
 When contributing code:
-- Keep `decide()` in `decision.py` as a pure function with no HA dependency.
+- Keep `decide_solar()` in `decision.py` as a pure function with no HA dependency.
 - Add a test case in `tests/test_decision_logic.py` for any new decision logic.
 - Run `pytest tests/` before submitting.
 
