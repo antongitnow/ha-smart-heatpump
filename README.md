@@ -152,10 +152,11 @@ All parameters appear as slider entities under the **Smart Heatpump Controller**
 The controller sends a push notification every time it changes the thermostat setpoint.
 
 1. Go to **Settings → Devices & services → Smart Heatpump Controller → Configure**.
-2. In the **Notification targets** field, enter your notify service names (comma-separated, without the `notify.` prefix):
+2. In the **Notification targets** field, enter your notify entity IDs (comma-separated, without the `notify.` prefix):
    ```
-   mobile_app_my_phone, telegram
+   mobile_app_my_phone, telegram_bot_1234567890_9876543210
    ```
+   Find your entity ID at **Settings → Devices & services → Entities**, filter by `notify`.
 3. Click **Submit**.
 
 Use the **Notifications** switch on the device or dashboard to mute/unmute without reconfiguring.

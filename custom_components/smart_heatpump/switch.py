@@ -134,10 +134,11 @@ class SmartHeatpumpDryRunSwitch(RestoreEntity, SwitchEntity):
             return
         for target_name in targets:
             try:
+                entity_id = f"notify.{target_name}"
                 await self.hass.services.async_call(
                     "notify",
-                    target_name,
-                    {"title": "Smart Heatpump", "message": message},
+                    "send_message",
+                    {"entity_id": entity_id, "title": "Smart Heatpump", "message": message},
                     blocking=True,
                 )
             except Exception:

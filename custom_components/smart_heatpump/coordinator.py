@@ -563,13 +563,15 @@ class SmartHeatpumpCoordinator:
         _LOGGER.info("Sending notification to targets: %s", targets)
         for target_name in targets:
             try:
+                # Use entity-based notify (HA 2024.6+): notify.send_message
+                entity_id = f"notify.{target_name}"
                 await self.hass.services.async_call(
                     "notify",
-                    target_name,
-                    {"title": title, "message": message},
+                    "send_message",
+                    {"entity_id": entity_id, "title": title, "message": message},
                     blocking=True,
                 )
-                _LOGGER.info("Notification sent to '%s'", target_name)
+                _LOGGER.info("Notification sent to '%s'", entity_id)
             except Exception:
                 _LOGGER.exception("Failed to send notification to '%s'", target_name)
 
