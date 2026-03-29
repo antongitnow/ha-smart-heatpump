@@ -150,6 +150,17 @@ class TestMessageContent:
         assert "21.0" in message
         assert "21.5" in message
 
+    def test_setpoint_uses_to_keyword(self) -> None:
+        """Setpoint change must use 'to' — not '->' which breaks Telegram."""
+        _, message = _format(old_setpoint=21.0, new_setpoint=21.5)
+        assert "21.0C to 21.5C" in message
+
+    def test_no_arrow_in_setpoint(self) -> None:
+        """Regression: '->' was the exact cause of the Telegram parse error."""
+        for rule in list(RULE_DESCRIPTIONS.keys()) + ["unknown_rule"]:
+            _, message = _format(rule=rule)
+            assert "->" not in message, f"Message for '{rule}' contains '->': {message}"
+
     def test_none_old_setpoint_shows_na(self) -> None:
         _, message = _format(old_setpoint=None)
         assert "N/A" in message
