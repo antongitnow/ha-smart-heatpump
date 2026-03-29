@@ -28,6 +28,7 @@ from .const import (
     RULE_DESCRIPTIONS,
 )
 from .decision import decide_solar
+from .notifications import format_notification
 from .thermal_model import predict_hours_until_below
 from .thermal_store import ThermalStore
 
@@ -546,42 +547,17 @@ class SmartHeatpumpCoordinator:
 
         cfg = self.config_values
         description = RULE_DESCRIPTIONS.get(rule, rule)
-
-        # Format values
-        outdoor_str = f"{outdoor_temp:.1f}°C" if outdoor_temp is not None else "N/A"
-        indoor_str = f"{indoor_temp:.1f}°C" if indoor_temp is not None else "N/A"
-        old_str = f"{old_setpoint:.1f}°C" if old_setpoint is not None else "N/A"
-
-        # Current power: show as export or import
-        if net_power is not None:
-            if net_power < 0:
-                current_power_str = f"Export {abs(net_power):.0f}W"
-            else:
-                current_power_str = f"Import {net_power:.0f}W"
-        else:
-            current_power_str = "N/A"
-
-        # 5-min average: show as import
-        avg_str = f"Import {avg_import_5min:.0f}W"
-
-        title = "Smart Heatpump"
-        dry_run_tag = " [DRY RUN]" if self.dry_run else ""
-        message = (
-            f"{description}\n"
-            f"\n"
-            f"Rule: {rule}{dry_run_tag}\n"
-            f"Room: {indoor_str}\n"
-            f"Outdoor: {outdoor_str}\n"
-            f"Setpoint: {old_str} -> {new_setpoint:.1f}C\n"
-            f"\n"
-            f"Current power: {current_power_str}\n"
-            f"5-min avg: {avg_str}\n"
-            f"\n"
-            f"Thresholds:\n"
-            f"  Surplus activate: {cfg['solar_surplus_threshold']:.0f}W export\n"
-            f"  Release high: {cfg['solar_release_threshold_high']:.0f}W import\n"
-            f"  Release low: {cfg['solar_release_threshold_low']:.0f}W import\n"
-            f"  Step delta: {cfg['solar_step_delta']:.1f}C"
+        title, message = format_notification(
+            rule=rule,
+            description=description,
+            old_setpoint=old_setpoint,
+            new_setpoint=new_setpoint,
+            outdoor_temp=outdoor_temp,
+            indoor_temp=indoor_temp,
+            net_power=net_power,
+            avg_import_5min=avg_import_5min,
+            dry_run=self.dry_run,
+            config=cfg,
         )
 
         _LOGGER.info("Sending notification to targets: %s", targets)
