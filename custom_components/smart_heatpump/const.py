@@ -49,13 +49,13 @@ NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]] = [
 # Human-readable rule descriptions for notifications
 # ---------------------------------------------------------------------------
 RULE_DESCRIPTIONS: dict[str, str] = {
-    "solar_incremental": "☀️ Solar surplus — boosting setpoint by step delta above current room temperature",
-    "solar_step_down": "⬇️ Moderate import detected — stepping setpoint down by step delta",
-    "solar_reset": "🔴 High import detected — resetting setpoint to ideal and deactivating boost",
-    "solar_boost_deactivated": "🔴 Setpoint reached ideal after step-down — deactivating solar boost",
-    "no_solar_action": "💤 Outside heating season or no surplus — no solar action",
-    "solar_boost_holding": "☀️ Solar boost active — holding current setpoint (no excess import)",
-    "default": "Normal operation — maintaining ideal temperature",
-    "error_fallback": "⚠️ Error occurred — using safe fallback temperature",
+    "solar_incremental": "Solar surplus - boosting setpoint",
+    "solar_step_down": "Moderate import - stepping setpoint down",
+    "solar_reset": "High import - resetting setpoint to ideal",
+    "solar_boost_deactivated": "Setpoint reached ideal - boost deactivated",
+    "no_solar_action": "No solar action",
+    "solar_boost_holding": "Solar boost active - holding setpoint",
+    "default": "Normal operation",
+    "error_fallback": "Error - using safe fallback temperature",
     "initialising": "Controller starting up",
 }

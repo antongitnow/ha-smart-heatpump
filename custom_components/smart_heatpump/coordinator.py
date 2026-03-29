@@ -565,22 +565,23 @@ class SmartHeatpumpCoordinator:
         avg_str = f"Import {avg_import_5min:.0f}W"
 
         title = "Smart Heatpump"
+        dry_run_tag = " [DRY RUN]" if self.dry_run else ""
         message = (
             f"{description}\n"
             f"\n"
-            f"Rule: {rule}\n"
+            f"Rule: {rule}{dry_run_tag}\n"
             f"Room: {indoor_str}\n"
             f"Outdoor: {outdoor_str}\n"
-            f"Setpoint: {old_str} → {new_setpoint:.1f}°C\n"
+            f"Setpoint: {old_str} -> {new_setpoint:.1f}C\n"
             f"\n"
             f"Current power: {current_power_str}\n"
             f"5-min avg: {avg_str}\n"
             f"\n"
             f"Thresholds:\n"
-            f"  Surplus activate: >{cfg['solar_surplus_threshold']:.0f}W export\n"
-            f"  Release high: >{cfg['solar_release_threshold_high']:.0f}W import\n"
-            f"  Release low: >{cfg['solar_release_threshold_low']:.0f}W import\n"
-            f"  Step delta: {cfg['solar_step_delta']:.1f}°C"
+            f"  Surplus activate: {cfg['solar_surplus_threshold']:.0f}W export\n"
+            f"  Release high: {cfg['solar_release_threshold_high']:.0f}W import\n"
+            f"  Release low: {cfg['solar_release_threshold_low']:.0f}W import\n"
+            f"  Step delta: {cfg['solar_step_delta']:.1f}C"
         )
 
         _LOGGER.info("Sending notification to targets: %s", targets)
