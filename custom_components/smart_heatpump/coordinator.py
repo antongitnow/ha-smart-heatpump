@@ -306,10 +306,13 @@ class SmartHeatpumpCoordinator:
                     avg_import_5min=avg_import_5min,
                 )
             else:
-                _LOGGER.debug(
-                    "DRY RUN — no change: setpoint=%.1f°C | rule=%s",
+                _LOGGER.info(
+                    "DRY RUN — no change: setpoint=%.1f°C | rule=%s | last_target=%s | is_actionable=%s | diff=%.3f",
                     target,
                     rule,
+                    previous,
+                    is_actionable,
+                    abs(target - previous) if previous is not None else -1,
                 )
         else:
             setpoint_changed = is_actionable and (
@@ -533,10 +536,12 @@ class SmartHeatpumpCoordinator:
     ) -> None:
         """Send enriched notification on setpoint change."""
         if not self.notifications_enabled:
+            _LOGGER.info("Notification skipped — notifications disabled")
             return
 
         targets = self.notify_targets
         if not targets:
+            _LOGGER.info("Notification skipped — no targets configured")
             return
 
         cfg = self.config_values
@@ -578,6 +583,7 @@ class SmartHeatpumpCoordinator:
             f"  Step delta: {cfg['solar_step_delta']:.1f}°C"
         )
 
+        _LOGGER.info("Sending notification to targets: %s", targets)
         for target_name in targets:
             try:
                 await self.hass.services.async_call(
@@ -586,8 +592,9 @@ class SmartHeatpumpCoordinator:
                     {"title": title, "message": message},
                     blocking=True,
                 )
+                _LOGGER.info("Notification sent to '%s'", target_name)
             except Exception:
-                _LOGGER.warning("Failed to send notification to '%s'", target_name)
+                _LOGGER.exception("Failed to send notification to '%s'", target_name)
 
     async def _async_safe_fallback(self) -> None:
         """Safe fallback on unhandled exception."""
