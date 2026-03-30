@@ -66,6 +66,7 @@ class SmartHeatpumpCoordinator:
 
         # Dry run — switch entity pushes updates here
         self.dry_run_enabled: bool = not self._opt(CONF_THERMOSTAT)
+        self.virtual_thermostat_entity = None  # Set by number.py on setup
 
         # Snapshot values for notifications / sensor attributes
         self._last_avg_import_5min: float = 0.0
@@ -297,6 +298,9 @@ class SmartHeatpumpCoordinator:
                     solar_export,
                     avg_import_5min,
                 )
+                # Update the virtual thermostat on the dashboard
+                if self.virtual_thermostat_entity is not None:
+                    self.virtual_thermostat_entity.set_value_from_coordinator(target)
                 await self._async_send_notification(
                     old_setpoint=previous,
                     new_setpoint=target,

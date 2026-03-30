@@ -48,7 +48,8 @@
       "solar_surplus_threshold": { "name": "Solar surplus threshold" },
       "solar_release_threshold_high": { "name": "Solar release threshold high" },
       "solar_release_threshold_low": { "name": "Solar release threshold low" },
-      "solar_step_delta": { "name": "Solar step delta" }
+      "solar_step_delta": { "name": "Solar step delta" },
+      "virtual_thermostat": { "name": "Virtual thermostat" }
     },
     "sensor": {
       "active_rule": { "name": "Active rule" },
