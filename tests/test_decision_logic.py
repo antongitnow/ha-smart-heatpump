@@ -209,25 +209,25 @@ class TestSolarBoostActiveImportChecks:
         assert target == pytest.approx(23.0 - 0.5)
 
     def test_step_down_clamps_to_ideal(self) -> None:
-        """Step-down that would go below ideal → clamp to ideal, keep boost active."""
+        """Step-down that would go below ideal → clamp to ideal, deactivate boost."""
         target, rule, boost = _decide(
             solar_boost_active=True,
             avg_import_5min_w=400.0,
             current_setpoint=21.3,  # 21.3 - 0.5 = 20.8 < 21.0 → clamp to 21.0
         )
-        assert rule == "solar_step_down"
-        assert boost is True
+        assert rule == "solar_boost_deactivated"
+        assert boost is False
         assert target == pytest.approx(21.0)
 
     def test_step_down_exactly_at_ideal(self) -> None:
-        """Step-down that lands exactly on ideal → keep boost active."""
+        """Step-down that lands exactly on ideal → deactivate boost."""
         target, rule, boost = _decide(
             solar_boost_active=True,
             avg_import_5min_w=400.0,
             current_setpoint=21.5,  # 21.5 - 0.5 = 21.0 = ideal
         )
-        assert rule == "solar_step_down"
-        assert boost is True
+        assert rule == "solar_boost_deactivated"
+        assert boost is False
         assert target == pytest.approx(21.0)
 
     def test_no_excess_import_boosts(self) -> None:
@@ -333,14 +333,14 @@ class TestEdgeCases:
         assert boost is False
 
     def test_boost_active_none_setpoint(self) -> None:
-        """Boost active, no current setpoint → step-down uses ideal, keep boost active."""
+        """Boost active, no current setpoint → falls to ideal, deactivate."""
         target, rule, boost = _decide(
             solar_boost_active=True,
             avg_import_5min_w=400.0,
             current_setpoint=None,
         )
-        assert rule == "solar_step_down"
-        assert boost is True
+        assert rule == "solar_boost_deactivated"
+        assert boost is False
         assert target == pytest.approx(21.0)
 
     def test_custom_step_delta(self) -> None:

@@ -95,14 +95,18 @@ def decide_solar(
     if avg_import_5min_w > solar_release_threshold_high:
         return temp_ideal, "solar_reset", False
 
-    # Check moderate import → step down but keep boost active
-    # Boost stays active so it can step back up when surplus returns
+    # Check moderate import → step down, keep boost active unless at ideal
     if avg_import_5min_w > solar_release_threshold_low:
         if current_setpoint is not None:
             target = current_setpoint - solar_step_delta
         else:
             target = temp_ideal
         target = max(target, temp_ideal)
+
+        # Deactivate only when setpoint has reached ideal temperature
+        if target <= temp_ideal:
+            return temp_ideal, "solar_boost_deactivated", False
+
         return target, "solar_step_down", True
 
     # No excess import — boost: step up from current setpoint

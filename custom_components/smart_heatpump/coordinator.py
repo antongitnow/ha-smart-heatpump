@@ -279,6 +279,7 @@ class SmartHeatpumpCoordinator:
             "solar_incremental",
             "solar_step_down",
             "solar_reset",
+            "solar_boost_deactivated",
         }
         is_actionable = rule in actionable_rules
 
