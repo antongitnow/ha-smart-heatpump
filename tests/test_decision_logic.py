@@ -254,6 +254,32 @@ class TestSolarBoostActiveImportChecks:
         assert boost is True
         assert target == pytest.approx(23.0)
 
+    def test_setpoint_tracks_rising_room_temp(self) -> None:
+        """When room temp rises to match setpoint, setpoint must stay ahead."""
+        # Room warmed up to 22.5, setpoint is also 22.5 → must go to 23.0
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=100.0,
+            current_temperature=22.5,
+            current_setpoint=22.5,
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+        assert target == pytest.approx(23.0)
+
+    def test_setpoint_stays_above_room_temp(self) -> None:
+        """Setpoint must always be at least room_temp + delta during boost."""
+        # Room is 22.0, setpoint somehow at 22.0 → must go to at least 22.5
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=100.0,
+            current_temperature=22.0,
+            current_setpoint=22.0,
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+        assert target >= 22.0 + 0.5
+
 
 # ===========================================================================
 # Boundary: thresholds exactly matched
