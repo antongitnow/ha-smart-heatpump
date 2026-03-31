@@ -87,6 +87,8 @@ class SmartHeatpumpRuleSensor(_BaseSensor):
             attrs["indoor_temp"] = c._last_indoor_temp
         if c._last_outdoor_temp is not None:
             attrs["outdoor_temp"] = c._last_outdoor_temp
+        attrs["notify_targets"] = c.notify_targets
+        attrs["notifications_enabled"] = c.notifications_enabled
         return attrs
 
 
