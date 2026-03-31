@@ -33,6 +33,7 @@ _module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_module)
 decide_solar = _module.decide_solar
 is_heating_season = _module.is_heating_season
+_snap_half = _module._snap_half
 
 # ---------------------------------------------------------------------------
 # Shared default config values
@@ -140,14 +141,15 @@ class TestSolarBoostActivation:
     """Tests for activating solar boost when surplus is detected."""
 
     def test_activate_on_surplus(self) -> None:
-        """Export > threshold → activate solar boost, setpoint = current_temp + delta."""
+        """Export > threshold → activate solar boost, setpoint snapped to 0.5."""
         target, rule, boost = _decide(
             avg_export_5min_w=700.0,
             current_temperature=21.2,
         )
         assert rule == "solar_incremental"
         assert boost is True
-        assert target == pytest.approx(21.2 + 0.5)
+        # 21.2 + 0.5 = 21.7, floor-snap → 21.5
+        assert target == pytest.approx(21.5)
 
     def test_no_activation_below_threshold(self) -> None:
         """Export below threshold → no activation."""
@@ -351,4 +353,53 @@ class TestEdgeCases:
             solar_step_delta=1.0,
         )
         assert rule == "solar_incremental"
+        assert target == pytest.approx(22.0)
+
+
+# ===========================================================================
+# Rounding — setpoint always snaps to nearest 0.5°C
+# ===========================================================================
+
+class TestSetpointRounding:
+    """Ensure setpoints are always clean 0.5 steps, never raw sensor floats."""
+
+    def test_snap_half_examples(self) -> None:
+        """_snap_half floors to nearest 0.5."""
+        assert _snap_half(21.699) == pytest.approx(21.5)
+        assert _snap_half(22.277) == pytest.approx(22.0)
+        assert _snap_half(21.0) == pytest.approx(21.0)
+        assert _snap_half(21.5) == pytest.approx(21.5)
+        assert _snap_half(21.99) == pytest.approx(21.5)
+        assert _snap_half(22.0) == pytest.approx(22.0)
+
+    def test_activation_rounds_setpoint(self) -> None:
+        """Activation with fractional room temp produces clean 0.5 step."""
+        target, rule, boost = _decide(
+            avg_export_5min_w=700.0,
+            current_temperature=21.699,  # raw sensor value
+        )
+        assert rule == "solar_incremental"
+        # 21.699 + 0.5 = 22.199 → snaps to 22.0
+        assert target == pytest.approx(22.0)
+
+    def test_continued_boost_rounds_setpoint(self) -> None:
+        """Continued boost with fractional room temp produces clean steps."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=0.0,
+            current_temperature=21.699,
+            current_setpoint=22.0,
+        )
+        assert rule == "solar_incremental"
+        # 22.0 + 0.5 = 22.5, capped at 21.699 + 1.0 = 22.699, snap → 22.5
+        assert target == pytest.approx(22.5)
+
+    def test_step_down_rounds_setpoint(self) -> None:
+        """Step-down produces a clean 0.5 value."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,
+            current_setpoint=22.5,
+        )
+        assert rule == "solar_step_down"
         assert target == pytest.approx(22.0)

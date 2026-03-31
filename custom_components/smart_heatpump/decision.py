@@ -14,6 +14,12 @@ Safety floor: setpoint is always >= temp_ideal (never goes below comfort).
 from __future__ import annotations
 
 
+def _snap_half(value: float) -> float:
+    """Round down to the nearest 0.5 (e.g. 21.699 → 21.5, 22.277 → 22.0)."""
+    from math import floor
+    return floor(value * 2) / 2
+
+
 def is_heating_season(month: int, season_start: int, season_end: int) -> bool:
     """Check if the given month falls within the heating season.
 
@@ -80,7 +86,7 @@ def decide_solar(
                 target = current_temperature + solar_step_delta
             else:
                 target = temp_ideal + solar_step_delta
-            target = max(target, temp_ideal)
+            target = _snap_half(max(target, temp_ideal))
             return target, "solar_incremental", True
         else:
             # No surplus → no action
@@ -101,7 +107,7 @@ def decide_solar(
             target = current_setpoint - solar_step_delta
         else:
             target = temp_ideal
-        target = max(target, temp_ideal)
+        target = _snap_half(max(target, temp_ideal))
 
         # Deactivate only when setpoint has reached ideal temperature
         if target <= temp_ideal:
@@ -120,5 +126,5 @@ def decide_solar(
     if current_temperature is not None:
         target = min(target, current_temperature + 1.0)
         target = max(target, current_temperature + solar_step_delta)
-    target = max(target, temp_ideal)
+    target = _snap_half(max(target, temp_ideal))
     return target, "solar_incremental", True
