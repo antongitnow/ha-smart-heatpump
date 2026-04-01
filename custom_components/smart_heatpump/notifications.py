@@ -24,7 +24,8 @@ def format_notification(
     Returns:
         (title, message) — plain-text strings safe for Telegram and other
         notification services. Must not contain characters that Telegram
-        interprets as HTML/Markdown markup (e.g. ``<``, ``>``, ``&``).
+        interprets as HTML/Markdown markup (e.g. ``<``, ``>``, ``&``, ``_``,
+        ``[``, ``]``).
     """
     # Format values
     outdoor_str = f"{outdoor_temp:.1f}C" if outdoor_temp is not None else "N/A"
@@ -43,12 +44,17 @@ def format_notification(
     # 5-min average: show as import
     avg_str = f"Import {avg_import_5min:.0f}W"
 
+    # Sanitize: underscores break Telegram Markdown parser,
+    # square brackets are Markdown link syntax
+    safe_rule = rule.replace("_", " ")
+    description = description.replace("_", " ")
+
     title = "Smart Heatpump"
-    dry_run_tag = " [DRY RUN]" if dry_run else ""
+    dry_run_tag = " (DRY RUN)" if dry_run else ""
     message = (
         f"{description}\n"
         f"\n"
-        f"Rule: {rule}{dry_run_tag}\n"
+        f"Rule: {safe_rule}{dry_run_tag}\n"
         f"Room: {indoor_str}\n"
         f"Outdoor: {outdoor_str}\n"
         f"Setpoint: {old_str} to {new_setpoint:.1f}C\n"

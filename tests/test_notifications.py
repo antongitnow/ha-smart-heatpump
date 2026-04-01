@@ -28,9 +28,9 @@ _notif_module = importlib.util.module_from_spec(_notif_spec)
 _notif_spec.loader.exec_module(_notif_module)
 format_notification = _notif_module.format_notification
 
-# Characters that Telegram interprets as HTML markup and will cause
-# "Can't parse entities" errors.
-TELEGRAM_UNSAFE_CHARS = re.compile(r"[<>&]")
+# Characters that Telegram interprets as HTML/Markdown markup and will cause
+# "Can't parse entities" errors or silently drop messages.
+TELEGRAM_UNSAFE_CHARS = re.compile(r"[<>&_\[\]]")
 
 # Characters that may cause issues with various notification parsers.
 PROBLEMATIC_UNICODE = re.compile(r"[→←↑↓°—–]")
@@ -135,15 +135,16 @@ class TestMessageContent:
 
     def test_dry_run_tag_present(self) -> None:
         _, message = _format(dry_run=True)
-        assert "[DRY RUN]" in message
+        assert "(DRY RUN)" in message
 
     def test_dry_run_tag_absent(self) -> None:
         _, message = _format(dry_run=False)
-        assert "[DRY RUN]" not in message
+        assert "(DRY RUN)" not in message
 
     def test_rule_name_in_message(self) -> None:
         _, message = _format(rule="solar_reset")
-        assert "solar_reset" in message
+        # Underscores replaced with spaces for Telegram safety
+        assert "solar reset" in message
 
     def test_setpoint_change_in_message(self) -> None:
         _, message = _format(old_setpoint=21.0, new_setpoint=21.5)
@@ -160,6 +161,20 @@ class TestMessageContent:
         for rule in list(RULE_DESCRIPTIONS.keys()) + ["unknown_rule"]:
             _, message = _format(rule=rule)
             assert "->" not in message, f"Message for '{rule}' contains '->': {message}"
+
+    def test_no_underscores_in_message(self) -> None:
+        """Regression: '_' in solar_incremental broke Telegram Markdown parser."""
+        for rule in list(RULE_DESCRIPTIONS.keys()) + ["unknown_rule"]:
+            _, message = _format(rule=rule)
+            assert "_" not in message, f"Message for '{rule}' contains '_': {message}"
+
+    def test_no_square_brackets_in_message(self) -> None:
+        """Square brackets are Markdown link syntax — use parentheses instead."""
+        for rule in list(RULE_DESCRIPTIONS.keys()) + ["unknown_rule"]:
+            for dry_run in (True, False):
+                _, message = _format(rule=rule, dry_run=dry_run)
+                assert "[" not in message, f"Message for '{rule}' contains '[': {message}"
+                assert "]" not in message, f"Message for '{rule}' contains ']': {message}"
 
     def test_none_old_setpoint_shows_na(self) -> None:
         _, message = _format(old_setpoint=None)
