@@ -289,18 +289,15 @@ class SmartHeatpumpCoordinator:
             setpoint_changed = is_actionable and (
                 previous is None or abs(target - previous) >= 0.1
             )
+            _LOGGER.warning(
+                "DRY RUN eval: rule=%s | target=%.1f | previous=%s | actionable=%s | changed=%s | export=%s | avg_import=%.0f",
+                rule, target, previous, is_actionable, setpoint_changed, solar_export, avg_import_5min,
+            )
             if setpoint_changed:
-                _LOGGER.info(
-                    "DRY RUN — would set: %s -> %.1f°C | rule=%s | export=%sW | avg_import_5min=%.0fW",
-                    previous,
-                    target,
-                    rule,
-                    solar_export,
-                    avg_import_5min,
-                )
                 # Update the virtual thermostat on the dashboard
                 if self.virtual_thermostat_entity is not None:
                     self.virtual_thermostat_entity.set_value_from_coordinator(target)
+                _LOGGER.warning("DRY RUN — calling _async_send_notification for rule=%s", rule)
                 await self._async_send_notification(
                     old_setpoint=previous,
                     new_setpoint=target,
@@ -309,15 +306,6 @@ class SmartHeatpumpCoordinator:
                     indoor_temp=indoor_temp,
                     net_power=net_power,
                     avg_import_5min=avg_import_5min,
-                )
-            else:
-                _LOGGER.info(
-                    "DRY RUN — no change: setpoint=%.1f°C | rule=%s | last_target=%s | is_actionable=%s | diff=%.3f",
-                    target,
-                    rule,
-                    previous,
-                    is_actionable,
-                    abs(target - previous) if previous is not None else -1,
                 )
         else:
             setpoint_changed = is_actionable and (
@@ -540,13 +528,17 @@ class SmartHeatpumpCoordinator:
         avg_import_5min: float,
     ) -> None:
         """Send enriched notification on setpoint change."""
+        _LOGGER.warning(
+            "NOTIFY entry: rule=%s | enabled=%s | targets=%s",
+            rule, self.notifications_enabled, self.notify_targets,
+        )
         if not self.notifications_enabled:
-            _LOGGER.info("Notification skipped — notifications disabled")
+            _LOGGER.warning("Notification skipped — notifications disabled")
             return
 
         targets = self.notify_targets
         if not targets:
-            _LOGGER.info("Notification skipped — no targets configured")
+            _LOGGER.warning("Notification skipped — no targets configured")
             return
 
         cfg = self.config_values
@@ -564,7 +556,7 @@ class SmartHeatpumpCoordinator:
             config=cfg,
         )
 
-        _LOGGER.info("Sending notification to targets: %s", targets)
+        _LOGGER.warning("Sending notification to targets: %s | message_len=%d", targets, len(message))
         for target_name in targets:
             try:
                 await self.hass.services.async_call(
@@ -573,9 +565,9 @@ class SmartHeatpumpCoordinator:
                     {"title": title, "message": message},
                     blocking=True,
                 )
-                _LOGGER.info("Notification sent to '%s'", target_name)
+                _LOGGER.warning("Notification SENT OK to '%s' for rule=%s", target_name, rule)
             except Exception:
-                _LOGGER.exception("Failed to send notification to '%s'", target_name)
+                _LOGGER.exception("Notification FAILED to '%s' for rule=%s", target_name, rule)
 
     async def _async_safe_fallback(self) -> None:
         """Safe fallback on unhandled exception."""
