@@ -211,11 +211,17 @@ class TestSolarBoostActiveImportChecks:
         assert target == pytest.approx(23.0 - 0.5)
 
     def test_step_down_clamps_to_ideal(self) -> None:
-        """Step-down that would go below ideal → clamp to ideal, deactivate boost."""
+        """Step-down that would go below ideal → clamp to ideal, deactivate boost.
+
+        Room temp must be at/below ideal for deactivation to happen,
+        because the room-temp floor (room + delta) keeps setpoint above ideal
+        when the room is warm.
+        """
         target, rule, boost = _decide(
             solar_boost_active=True,
             avg_import_5min_w=400.0,
-            current_setpoint=21.3,  # 21.3 - 0.5 = 20.8 < 21.0 → clamp to 21.0
+            current_temperature=20.0,  # at/below ideal → floor is 20.5
+            current_setpoint=21.3,  # 21.3 - 0.5 = 20.8, floor max(20.8, 20.5) = 20.8 → clamp to 21.0
         )
         assert rule == "solar_boost_deactivated"
         assert boost is False
@@ -226,11 +232,24 @@ class TestSolarBoostActiveImportChecks:
         target, rule, boost = _decide(
             solar_boost_active=True,
             avg_import_5min_w=400.0,
-            current_setpoint=21.5,  # 21.5 - 0.5 = 21.0 = ideal
+            current_temperature=20.0,  # below ideal → floor is 20.5
+            current_setpoint=21.5,  # 21.5 - 0.5 = 21.0, floor max(21.0, 20.5) = 21.0 = ideal
         )
         assert rule == "solar_boost_deactivated"
         assert boost is False
         assert target == pytest.approx(21.0)
+
+    def test_step_down_respects_room_temp_floor(self) -> None:
+        """Step-down cannot drop setpoint below room temp + delta (prevents heatpump cycling)."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,
+            current_temperature=22.0,
+            current_setpoint=22.5,  # 22.5 - 0.5 = 22.0, but floor = 22.0 + 0.5 = 22.5
+        )
+        assert rule == "solar_step_down"
+        assert boost is True
+        assert target == pytest.approx(22.5)  # held at floor, heatpump stays on
 
     def test_no_excess_import_boosts(self) -> None:
         """Low import → continue boosting (setpoint = current_setpoint + delta)."""
@@ -335,15 +354,16 @@ class TestEdgeCases:
         assert boost is False
 
     def test_boost_active_none_setpoint(self) -> None:
-        """Boost active, no current setpoint → falls to ideal, deactivate."""
+        """Boost active, no current setpoint, moderate import → room-temp floor keeps boost on."""
         target, rule, boost = _decide(
             solar_boost_active=True,
             avg_import_5min_w=400.0,
             current_setpoint=None,
+            current_temperature=21.0,  # room at ideal → floor = 21.5
         )
-        assert rule == "solar_boost_deactivated"
-        assert boost is False
-        assert target == pytest.approx(21.0)
+        assert rule == "solar_step_down"
+        assert boost is True
+        assert target == pytest.approx(21.5)  # held above room temp
 
     def test_custom_step_delta(self) -> None:
         """Custom step delta is respected."""

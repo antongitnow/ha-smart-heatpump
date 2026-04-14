@@ -127,6 +127,9 @@ def decide_solar(
             target = current_setpoint - solar_step_delta
         else:
             target = temp_ideal
+        # Floor: never drop below room temp + delta (keeps heatpump running)
+        if current_temperature is not None:
+            target = max(target, current_temperature + solar_step_delta)
         target = _snap_half(max(target, temp_ideal))
 
         # Deactivate only when setpoint has reached ideal temperature
