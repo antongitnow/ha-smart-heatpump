@@ -39,7 +39,9 @@ _IMPORT_HISTORY_SECONDS = 300  # 5 minutes
 
 # Minimum number of readings before 5-min averages are trusted.
 # Prevents a single spike after HA restart from triggering reset/step-down.
-_MIN_READINGS_FOR_AVG = 3
+# With a 5-min eval interval and 5-min history window, only 1-2 readings
+# fit in the window at once — so this MUST be <= 2.
+_MIN_READINGS_FOR_AVG = 2
 
 
 class SmartHeatpumpCoordinator:
