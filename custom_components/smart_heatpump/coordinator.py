@@ -249,8 +249,18 @@ class SmartHeatpumpCoordinator:
         else:
             avg_export_5min = 0.0
 
-        # ---- Read current setpoint from thermostat ----
-        current_setpoint = self._read_current_setpoint()
+        # ---- Read current setpoint ----
+        # Use our last commanded target (self.last_target) when boost is active,
+        # because the thermostat may not have updated its reported setpoint yet
+        # from the previous set_temperature call (poll lag).  Fall back to the
+        # thermostat-reported value when we haven't commanded anything yet.
+        thermostat_setpoint = self._read_current_setpoint()
+        if self.dry_run:
+            current_setpoint = self.last_target
+        elif self._solar_boost_active and self.last_target is not None:
+            current_setpoint = self.last_target
+        else:
+            current_setpoint = thermostat_setpoint
 
         # ---- Solar incremental decision ----
         now_local = dt_util.now()
@@ -267,7 +277,7 @@ class SmartHeatpumpCoordinator:
             avg_export_5min_w=avg_export_5min,
             avg_import_5min_w=avg_import_5min,
             current_temperature=indoor_temp,
-            current_setpoint=current_setpoint if not self.dry_run else self.last_target,
+            current_setpoint=current_setpoint,
             temp_ideal=cfg["temp_ideal"],
             solar_surplus_threshold=cfg["solar_surplus_threshold"],
             solar_release_threshold_high=cfg["solar_release_threshold_high"],
