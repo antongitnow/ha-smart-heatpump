@@ -34,14 +34,13 @@ from .thermal_store import ThermalStore
 
 _LOGGER = logging.getLogger(__name__)
 
-# How many seconds of import history to keep for the 5-minute rolling average
-_IMPORT_HISTORY_SECONDS = 300  # 5 minutes
+# How many minutes of P1 history to query for the rolling average
+_AVG_WINDOW_MINUTES = 5
 
-# Minimum number of readings before 5-min averages are trusted.
-# Prevents a single spike after HA restart from triggering reset/step-down.
-# With a 5-min eval interval and 5-min history window, only 1-2 readings
-# fit in the window at once — so this MUST be <= 2.
-_MIN_READINGS_FOR_AVG = 2
+# Minimum number of P1 readings in the window before trusting the average.
+# The P1 meter reports every ~10s, so 5 minutes should yield ~30 readings.
+# Require at least 3 to avoid acting on stale/sparse data after HA restart.
+_MIN_READINGS_FOR_AVG = 3
 
 
 class SmartHeatpumpCoordinator:
@@ -66,8 +65,6 @@ class SmartHeatpumpCoordinator:
         self.hours_until_below_ideal: float | None = None
         self._solar_boost_active: bool = False
         self._boost_activated_at: float | None = None  # monotonic timestamp
-        self._import_history: list[tuple[float, float]] = []  # [(timestamp, import_w)]
-        self._export_history: list[tuple[float, float]] = []  # [(timestamp, export_w)]
         self._cancel_timer: CALLBACK_TYPE | None = None
         self._listeners: list[callback] = []
 
@@ -252,37 +249,11 @@ class SmartHeatpumpCoordinator:
         else:
             self.hours_until_below_ideal = None
 
-        # ---- 5-minute rolling averages (import and export) ----
-        now_ts = now_utc.timestamp()
-        cutoff_ts = now_ts - _IMPORT_HISTORY_SECONDS
-
-        if grid_import is not None:
-            self._import_history.append((now_ts, grid_import))
-        self._import_history = [
-            (ts, w) for ts, w in self._import_history if ts >= cutoff_ts
-        ]
-        if len(self._import_history) >= _MIN_READINGS_FOR_AVG:
-            avg_import_5min = sum(w for _, w in self._import_history) / len(
-                self._import_history
-            )
-        else:
-            # Not enough readings yet (e.g. just after HA restart) — don't
-            # trust a single spike to trigger reset/step-down.
-            avg_import_5min = 0.0
+        # ---- 5-minute rolling averages from P1 history ----
+        # Query HA's recorder for all P1 readings in the last N minutes.
+        # The P1 meter reports every ~10s, giving ~30 readings per 5-min window.
+        avg_export_5min, avg_import_5min = await self._async_read_p1_averages()
         self._last_avg_import_5min = avg_import_5min
-
-        if solar_export is not None:
-            self._export_history.append((now_ts, solar_export))
-        self._export_history = [
-            (ts, w) for ts, w in self._export_history if ts >= cutoff_ts
-        ]
-        if len(self._export_history) >= _MIN_READINGS_FOR_AVG:
-            avg_export_5min = sum(w for _, w in self._export_history) / len(
-                self._export_history
-            )
-        else:
-            # Not enough readings yet — don't activate boost on a single reading.
-            avg_export_5min = 0.0
 
         # ---- Read current setpoint ----
         # Use our last commanded target (self.last_target) when boost is active,
@@ -436,6 +407,66 @@ class SmartHeatpumpCoordinator:
             except (TypeError, ValueError):
                 pass
         return False
+
+    async def _async_read_p1_averages(self) -> tuple[float, float]:
+        """Query HA recorder for P1 power readings over the last N minutes.
+
+        Returns (avg_export_watts, avg_import_watts).
+        Negative P1 values = export, positive = import.
+        """
+        entity_id = self._opt(CONF_P1_POWER)
+        if not entity_id:
+            return 0.0, 0.0
+
+        now = dt_util.utcnow()
+        start_time = now - timedelta(minutes=_AVG_WINDOW_MINUTES)
+
+        try:
+            from homeassistant.components.recorder import get_instance
+            from homeassistant.components.recorder.history import state_changes_during_period
+
+            history = await get_instance(self.hass).async_add_executor_job(
+                state_changes_during_period,
+                self.hass,
+                start_time,
+                now,
+                entity_id,
+                True,   # no_attributes — we only need the state value
+                False,  # descending
+                None,   # limit
+                False,  # include_start_time_state
+            )
+        except Exception:
+            _LOGGER.warning("Failed to query P1 history for '%s'", entity_id)
+            return 0.0, 0.0
+
+        states = history.get(entity_id, [])
+        readings: list[float] = []
+        for state in states:
+            if state.state in ("unavailable", "unknown", ""):
+                continue
+            try:
+                readings.append(float(state.state))
+            except (TypeError, ValueError):
+                continue
+
+        if len(readings) < _MIN_READINGS_FOR_AVG:
+            _LOGGER.debug(
+                "P1 history: only %d readings in %d-min window (need %d)",
+                len(readings), _AVG_WINDOW_MINUTES, _MIN_READINGS_FOR_AVG,
+            )
+            return 0.0, 0.0
+
+        # Compute average net power, then split into export and import
+        avg_net = sum(readings) / len(readings)
+        avg_export = max(0.0, -avg_net)
+        avg_import = max(0.0, avg_net)
+
+        _LOGGER.debug(
+            "P1 5-min avg: %d readings | net=%.0fW | export=%.0fW | import=%.0fW",
+            len(readings), avg_net, avg_export, avg_import,
+        )
+        return avg_export, avg_import
 
     def _read_outdoor_temp(self) -> float | None:
         """Read outdoor temperature from the weather entity."""
