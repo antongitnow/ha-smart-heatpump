@@ -132,6 +132,15 @@ class TestOutsideHeatingSeasonNoAction:
         assert rule == "no_solar_action"
         assert target == pytest.approx(22.0)
 
+    def test_summer_no_setpoint_returns_ideal(self) -> None:
+        """Outside heating season with no setpoint → falls back to ideal."""
+        target, rule, boost = _decide(
+            current_month=7,
+            current_setpoint=None,
+        )
+        assert rule == "no_solar_action"
+        assert target == pytest.approx(21.0)
+
 
 # ===========================================================================
 # Solar boost activation — surplus detected
@@ -353,6 +362,15 @@ class TestEdgeCases:
         assert rule == "no_solar_action"
         assert boost is False
 
+    def test_no_surplus_no_setpoint_returns_ideal(self) -> None:
+        """No surplus, no current setpoint → falls back to ideal."""
+        target, rule, boost = _decide(
+            avg_export_5min_w=0.0,
+            current_setpoint=None,
+        )
+        assert rule == "no_solar_action"
+        assert target == pytest.approx(21.0)
+
     def test_boost_active_none_setpoint(self) -> None:
         """Boost active, no current setpoint, moderate import → room-temp floor keeps boost on."""
         target, rule, boost = _decide(
@@ -374,6 +392,54 @@ class TestEdgeCases:
         )
         assert rule == "solar_incremental"
         assert target == pytest.approx(22.0)
+
+    def test_step_down_no_temp_sensor(self) -> None:
+        """Step-down with no temperature sensor → no room-temp floor, falls to ideal."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,
+            current_temperature=None,
+            current_setpoint=21.5,  # 21.5 - 0.5 = 21.0 = ideal
+        )
+        assert rule == "solar_boost_deactivated"
+        assert boost is False
+        assert target == pytest.approx(21.0)
+
+    def test_continue_boost_no_setpoint_with_temp(self) -> None:
+        """Continue boost, no setpoint but temp available → uses temp + delta."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=0.0,
+            current_temperature=22.0,
+            current_setpoint=None,
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+        assert target == pytest.approx(22.5)
+
+    def test_continue_boost_no_setpoint_no_temp(self) -> None:
+        """Continue boost, no setpoint and no temp → uses ideal + delta."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=0.0,
+            current_temperature=None,
+            current_setpoint=None,
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+        assert target == pytest.approx(21.5)  # ideal(21.0) + delta(0.5)
+
+    def test_step_down_high_room_temp_holds_setpoint(self) -> None:
+        """When room temp is high, step-down can't lower setpoint below room + delta."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,
+            current_temperature=23.0,
+            current_setpoint=23.5,  # 23.5 - 0.5 = 23.0, but floor = 23.0 + 0.5 = 23.5
+        )
+        assert rule == "solar_step_down"
+        assert boost is True
+        assert target == pytest.approx(23.5)  # held steady
 
 
 # ===========================================================================
@@ -498,3 +564,59 @@ class TestMinimumBoostDuration:
         )
         assert rule == "solar_reset"
         assert boost is False
+
+    def test_min_run_no_setpoint_with_temp(self) -> None:
+        """Min run, no setpoint but temp available → uses temp + delta."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=900.0,
+            current_temperature=22.0,
+            current_setpoint=None,
+            boost_active_seconds=300,
+            min_boost_minutes=20,
+        )
+        assert rule == "solar_min_run"
+        assert boost is True
+        assert target == pytest.approx(22.5)  # 22.0 + 0.5
+
+    def test_min_run_no_setpoint_no_temp(self) -> None:
+        """Min run, no setpoint and no temp → uses ideal + delta."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=900.0,
+            current_temperature=None,
+            current_setpoint=None,
+            boost_active_seconds=300,
+            min_boost_minutes=20,
+        )
+        assert rule == "solar_min_run"
+        assert boost is True
+        assert target == pytest.approx(21.5)  # ideal(21.0) + delta(0.5)
+
+    def test_min_run_caps_at_1_degree_above_room(self) -> None:
+        """During min run, setpoint is capped at room temp + 1.0°C."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=0.0,
+            current_temperature=22.0,
+            current_setpoint=23.5,  # above room + 1.0 → capped to 23.0
+            boost_active_seconds=300,
+            min_boost_minutes=20,
+        )
+        assert rule == "solar_min_run"
+        assert boost is True
+        assert target == pytest.approx(23.0)  # 22.0 + 1.0
+
+    def test_min_run_expired_allows_step_down(self) -> None:
+        """After min run expires, moderate import triggers normal step-down."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,
+            current_temperature=21.0,
+            current_setpoint=22.5,
+            boost_active_seconds=1201,  # > 20 min
+            min_boost_minutes=20,
+        )
+        assert rule == "solar_step_down"
+        assert boost is True
+        assert target == pytest.approx(22.0)  # 22.5 - 0.5
