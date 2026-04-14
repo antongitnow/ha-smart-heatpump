@@ -37,6 +37,10 @@ _LOGGER = logging.getLogger(__name__)
 # How many seconds of import history to keep for the 5-minute rolling average
 _IMPORT_HISTORY_SECONDS = 300  # 5 minutes
 
+# Minimum number of readings before 5-min averages are trusted.
+# Prevents a single spike after HA restart from triggering reset/step-down.
+_MIN_READINGS_FOR_AVG = 3
+
 
 class SmartHeatpumpCoordinator:
     """Manages the evaluation loop and state for the Smart Heatpump Controller."""
@@ -136,10 +140,36 @@ class SmartHeatpumpCoordinator:
     @callback
     def async_start(self) -> None:
         """Start the evaluation loop (called after entities are set up)."""
+        # Recover boost state after HA restart — if the thermostat setpoint
+        # is above ideal, a boost was likely active before shutdown.
+        self._recover_boost_state()
+
         # First evaluation after a short delay to let entities restore
         self._cancel_timer = async_call_later(
             self.hass, 10, self._async_evaluate_callback
         )
+
+    def _recover_boost_state(self) -> None:
+        """Recover solar boost state after HA restart.
+
+        If the thermostat setpoint is above temp_ideal, infer that a boost
+        was active before shutdown and resume it.  This prevents the first
+        evaluation from "re-activating" at room_temp + delta and lowering
+        the setpoint.
+        """
+        import time as _time
+
+        thermostat_sp = self._read_current_setpoint()
+        ideal = self.config_values.get("temp_ideal", 21.0)
+        if thermostat_sp is not None and thermostat_sp > ideal:
+            self._solar_boost_active = True
+            self.last_target = thermostat_sp
+            self._boost_activated_at = _time.monotonic()
+            _LOGGER.info(
+                "Recovered boost state: thermostat at %.1f°C (above ideal %.1f°C) — resuming boost",
+                thermostat_sp,
+                ideal,
+            )
 
     @callback
     def async_stop(self) -> None:
@@ -229,11 +259,13 @@ class SmartHeatpumpCoordinator:
         self._import_history = [
             (ts, w) for ts, w in self._import_history if ts >= cutoff_ts
         ]
-        if self._import_history:
+        if len(self._import_history) >= _MIN_READINGS_FOR_AVG:
             avg_import_5min = sum(w for _, w in self._import_history) / len(
                 self._import_history
             )
         else:
+            # Not enough readings yet (e.g. just after HA restart) — don't
+            # trust a single spike to trigger reset/step-down.
             avg_import_5min = 0.0
         self._last_avg_import_5min = avg_import_5min
 
@@ -242,11 +274,12 @@ class SmartHeatpumpCoordinator:
         self._export_history = [
             (ts, w) for ts, w in self._export_history if ts >= cutoff_ts
         ]
-        if self._export_history:
+        if len(self._export_history) >= _MIN_READINGS_FOR_AVG:
             avg_export_5min = sum(w for _, w in self._export_history) / len(
                 self._export_history
             )
         else:
+            # Not enough readings yet — don't activate boost on a single reading.
             avg_export_5min = 0.0
 
         # ---- Read current setpoint ----
