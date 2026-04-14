@@ -28,6 +28,7 @@ DEFAULTS: dict[str, float] = {
     "solar_release_threshold_high": 700.0,
     "solar_release_threshold_low": 300.0,
     "solar_step_delta": 0.5,
+    "solar_min_boost_minutes": 20.0,
 }
 
 # ---------------------------------------------------------------------------
@@ -43,6 +44,7 @@ NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]] = [
     ("solar_release_threshold_high", "Solar release threshold high", 0, 5000, 50, "W", "mdi:transmission-tower-import"),
     ("solar_release_threshold_low", "Solar release threshold low", 0, 5000, 50, "W", "mdi:transmission-tower-import"),
     ("solar_step_delta", "Solar step delta", 0.1, 3.0, 0.1, "°C", "mdi:thermometer-plus"),
+    ("solar_min_boost_minutes", "Minimum boost duration", 0, 60, 5, "min", "mdi:timer-outline"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -55,6 +57,7 @@ RULE_DESCRIPTIONS: dict[str, str] = {
     "solar_boost_deactivated": "Setpoint reached ideal - boost deactivated",
     "no_solar_action": "No solar action",
     "solar_boost_holding": "Solar boost active - holding setpoint",
+    "solar_min_run": "Minimum run time - keeping boost active",
     "default": "Normal operation",
     "error_fallback": "Error - using safe fallback temperature",
     "initialising": "Controller starting up",

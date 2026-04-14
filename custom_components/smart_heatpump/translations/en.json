@@ -49,6 +49,7 @@
       "solar_release_threshold_high": { "name": "Solar release threshold high" },
       "solar_release_threshold_low": { "name": "Solar release threshold low" },
       "solar_step_delta": { "name": "Solar step delta" },
+      "solar_min_boost_minutes": { "name": "Minimum boost duration" },
       "virtual_thermostat": { "name": "Virtual thermostat" }
     },
     "sensor": {

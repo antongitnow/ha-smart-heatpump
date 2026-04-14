@@ -48,6 +48,8 @@ def decide_solar(
     solar_step_delta: float,
     season_start_month: int,
     season_end_month: int,
+    boost_active_seconds: float = 0.0,
+    min_boost_minutes: float = 0.0,
 ) -> tuple[float, str, bool]:
     """Decide the target thermostat setpoint for the solar incremental flow.
 
@@ -65,6 +67,8 @@ def decide_solar(
         solar_step_delta: °C to boost above current temp / step down per cycle.
         season_start_month: First month of heating season (1-12).
         season_end_month: Last month of heating season (1-12).
+        boost_active_seconds: How long boost has been active (seconds).
+        min_boost_minutes: Minimum boost duration before step-down/reset allowed.
 
     Returns:
         (target_setpoint, rule_name, new_solar_boost_active)
@@ -97,6 +101,22 @@ def decide_solar(
             )
 
     # Branch: solar boost IS currently active
+    # Minimum run time protection — keep boost active and setpoint ahead of room temp
+    in_min_run = min_boost_minutes > 0 and boost_active_seconds < min_boost_minutes * 60
+    if in_min_run:
+        # During minimum run: keep setpoint between room_temp + delta and room_temp + 1.0
+        if current_setpoint is not None:
+            target = current_setpoint
+        elif current_temperature is not None:
+            target = current_temperature + solar_step_delta
+        else:
+            target = temp_ideal + solar_step_delta
+        if current_temperature is not None:
+            target = max(target, current_temperature + solar_step_delta)
+            target = min(target, current_temperature + 1.0)
+        target = _snap_half(max(target, temp_ideal))
+        return target, "solar_min_run", True
+
     # Check high import → immediate reset
     if avg_import_5min_w > solar_release_threshold_high:
         return temp_ideal, "solar_reset", False

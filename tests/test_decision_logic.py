@@ -403,3 +403,78 @@ class TestSetpointRounding:
         )
         assert rule == "solar_step_down"
         assert target == pytest.approx(22.0)
+
+
+# ===========================================================================
+# Minimum boost duration — prevent short cycling
+# ===========================================================================
+
+class TestMinimumBoostDuration:
+    """Ensure boost stays active during minimum run period."""
+
+    def test_min_run_blocks_high_import_reset(self) -> None:
+        """High import during min run → keep boost active, don't reset."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=900.0,  # Would normally trigger reset
+            current_temperature=21.5,
+            current_setpoint=22.0,
+            boost_active_seconds=300,  # 5 minutes
+            min_boost_minutes=20,
+        )
+        assert rule == "solar_min_run"
+        assert boost is True
+        assert target >= 22.0  # Setpoint stays ahead of room temp
+
+    def test_min_run_blocks_step_down(self) -> None:
+        """Moderate import during min run → keep boost active."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,  # Would normally step down
+            current_temperature=21.5,
+            current_setpoint=22.0,
+            boost_active_seconds=600,  # 10 minutes
+            min_boost_minutes=20,
+        )
+        assert rule == "solar_min_run"
+        assert boost is True
+
+    def test_min_run_expired_allows_reset(self) -> None:
+        """After min run expires, high import triggers normal reset."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=900.0,
+            current_temperature=21.5,
+            current_setpoint=22.0,
+            boost_active_seconds=1200 + 1,  # 20 min + 1 sec
+            min_boost_minutes=20,
+        )
+        assert rule == "solar_reset"
+        assert boost is False
+
+    def test_min_run_tracks_room_temp(self) -> None:
+        """During min run, setpoint stays ahead of rising room temp."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=500.0,
+            current_temperature=22.0,  # Room warmed up
+            current_setpoint=22.0,     # Setpoint caught up
+            boost_active_seconds=300,
+            min_boost_minutes=20,
+        )
+        assert rule == "solar_min_run"
+        assert boost is True
+        assert target >= 22.5  # Must stay ahead of room temp
+
+    def test_min_run_zero_disables_protection(self) -> None:
+        """min_boost_minutes=0 means no protection."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=900.0,
+            current_temperature=21.5,
+            current_setpoint=22.0,
+            boost_active_seconds=60,
+            min_boost_minutes=0,
+        )
+        assert rule == "solar_reset"
+        assert boost is False

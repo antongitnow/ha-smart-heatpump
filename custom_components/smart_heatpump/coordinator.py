@@ -59,6 +59,7 @@ class SmartHeatpumpCoordinator:
         self.last_target: float | None = None  # Track computed setpoint
         self.hours_until_below_ideal: float | None = None
         self._solar_boost_active: bool = False
+        self._boost_activated_at: float | None = None  # monotonic timestamp
         self._import_history: list[tuple[float, float]] = []  # [(timestamp, import_w)]
         self._export_history: list[tuple[float, float]] = []  # [(timestamp, export_w)]
         self._cancel_timer: CALLBACK_TYPE | None = None
@@ -255,6 +256,11 @@ class SmartHeatpumpCoordinator:
         now_local = dt_util.now()
         current_month = now_local.month
 
+        import time as _time
+        boost_active_seconds = 0.0
+        if self._solar_boost_active and self._boost_activated_at is not None:
+            boost_active_seconds = _time.monotonic() - self._boost_activated_at
+
         target, rule, new_boost_active = decide_solar(
             current_month=current_month,
             solar_boost_active=self._solar_boost_active,
@@ -269,10 +275,18 @@ class SmartHeatpumpCoordinator:
             solar_step_delta=cfg["solar_step_delta"],
             season_start_month=int(cfg["solar_season_start_month"]),
             season_end_month=int(cfg["solar_season_end_month"]),
+            boost_active_seconds=boost_active_seconds,
+            min_boost_minutes=cfg.get("solar_min_boost_minutes", 0.0),
         )
 
         prev_boost_active = self._solar_boost_active
         self._solar_boost_active = new_boost_active
+
+        # Track when boost was activated
+        if new_boost_active and not prev_boost_active:
+            self._boost_activated_at = _time.monotonic()
+        elif not new_boost_active:
+            self._boost_activated_at = None
 
         # Determine if we should apply a change
         # Only act when the rule actually changes the thermostat
@@ -281,6 +295,7 @@ class SmartHeatpumpCoordinator:
             "solar_step_down",
             "solar_reset",
             "solar_boost_deactivated",
+            "solar_min_run",
         }
         is_actionable = rule in actionable_rules
 
