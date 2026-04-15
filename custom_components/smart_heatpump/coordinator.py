@@ -252,7 +252,19 @@ class SmartHeatpumpCoordinator:
         # ---- 5-minute rolling averages from P1 history ----
         # Query HA's recorder for all P1 readings in the last N minutes.
         # The P1 meter reports every ~10s, giving ~30 readings per 5-min window.
-        avg_export_5min, avg_import_5min = await self._async_read_p1_averages()
+        p1_averages = await self._async_read_p1_averages()
+        if p1_averages is None:
+            # Not enough P1 readings — skip solar decision entirely.
+            # This prevents wrong boost activation/step-up when we have no data
+            # (e.g. just after HA restart, recorder not ready yet).
+            _LOGGER.info(
+                "Skipping solar decision — not enough P1 data in %d-min window",
+                _AVG_WINDOW_MINUTES,
+            )
+            self.active_rule = "waiting_for_data"
+            self._notify_listeners()
+            return
+        avg_export_5min, avg_import_5min = p1_averages
         self._last_avg_import_5min = avg_import_5min
 
         # ---- Read current setpoint ----
@@ -408,15 +420,20 @@ class SmartHeatpumpCoordinator:
                 pass
         return False
 
-    async def _async_read_p1_averages(self) -> tuple[float, float]:
+    async def _async_read_p1_averages(self) -> tuple[float, float] | None:
         """Query HA recorder for P1 power readings over the last N minutes.
 
-        Returns (avg_export_watts, avg_import_watts).
+        Returns (avg_export_watts, avg_import_watts), or None if there is
+        not enough data to compute a reliable average.  Returning None
+        signals the caller to skip the solar decision entirely — this
+        prevents wrong boost activation when data is missing (e.g. right
+        after HA restart or when the recorder is not ready).
+
         Negative P1 values = export, positive = import.
         """
         entity_id = self._opt(CONF_P1_POWER)
         if not entity_id:
-            return 0.0, 0.0
+            return None
 
         now = dt_util.utcnow()
         start_time = now - timedelta(minutes=_AVG_WINDOW_MINUTES)
@@ -438,7 +455,7 @@ class SmartHeatpumpCoordinator:
             )
         except Exception:
             _LOGGER.warning("Failed to query P1 history for '%s'", entity_id)
-            return 0.0, 0.0
+            return None
 
         states = history.get(entity_id, [])
         readings: list[float] = []
@@ -455,7 +472,7 @@ class SmartHeatpumpCoordinator:
                 "P1 history: only %d readings in %d-min window (need %d)",
                 len(readings), _AVG_WINDOW_MINUTES, _MIN_READINGS_FOR_AVG,
             )
-            return 0.0, 0.0
+            return None
 
         # Compute average net power, then split into export and import
         avg_net = sum(readings) / len(readings)
