@@ -29,6 +29,7 @@ DEFAULTS: dict[str, float] = {
     "solar_release_threshold_low": 300.0,
     "solar_step_delta": 0.5,
     "solar_min_boost_minutes": 20.0,
+    "solar_max_boost_temp": 25.0,
 }
 
 # ---------------------------------------------------------------------------
@@ -45,6 +46,7 @@ NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]] = [
     ("solar_release_threshold_low", "Solar release threshold low", 0, 5000, 50, "W", "mdi:transmission-tower-import"),
     ("solar_step_delta", "Solar step delta", 0.1, 3.0, 0.1, "°C", "mdi:thermometer-plus"),
     ("solar_min_boost_minutes", "Minimum boost duration", 0, 60, 5, "min", "mdi:timer-outline"),
+    ("solar_max_boost_temp", "Maximum boost temperature", 10, 30, 0.5, "°C", "mdi:thermometer-high"),
 ]
 
 # ---------------------------------------------------------------------------

@@ -50,6 +50,7 @@ def decide_solar(
     season_end_month: int,
     boost_active_seconds: float = 0.0,
     min_boost_minutes: float = 0.0,
+    max_boost_temp: float = 25.0,
 ) -> tuple[float, str, bool]:
     """Decide the target thermostat setpoint for the solar incremental flow.
 
@@ -69,6 +70,7 @@ def decide_solar(
         season_end_month: Last month of heating season (1-12).
         boost_active_seconds: How long boost has been active (seconds).
         min_boost_minutes: Minimum boost duration before step-down/reset allowed.
+        max_boost_temp: Absolute ceiling for boosted setpoint (°C).
 
     Returns:
         (target_setpoint, rule_name, new_solar_boost_active)
@@ -90,7 +92,7 @@ def decide_solar(
                 target = current_temperature + solar_step_delta
             else:
                 target = temp_ideal + solar_step_delta
-            target = _snap_half(max(target, temp_ideal))
+            target = _snap_half(min(max(target, temp_ideal), max_boost_temp))
             return target, "solar_incremental", True
         else:
             # No surplus → no action
@@ -114,7 +116,7 @@ def decide_solar(
         if current_temperature is not None:
             target = max(target, current_temperature + solar_step_delta)
             target = min(target, current_temperature + 1.0)
-        target = _snap_half(max(target, temp_ideal))
+        target = _snap_half(min(max(target, temp_ideal), max_boost_temp))
         return target, "solar_min_run", True
 
     # Check high import → immediate reset
@@ -130,7 +132,7 @@ def decide_solar(
         # Floor: never drop below room temp + delta (keeps heatpump running)
         if current_temperature is not None:
             target = max(target, current_temperature + solar_step_delta)
-        target = _snap_half(max(target, temp_ideal))
+        target = _snap_half(min(max(target, temp_ideal), max_boost_temp))
 
         # Deactivate only when setpoint has reached ideal temperature
         if target <= temp_ideal:
@@ -149,5 +151,5 @@ def decide_solar(
     if current_temperature is not None:
         target = min(target, current_temperature + 1.0)
         target = max(target, current_temperature + solar_step_delta)
-    target = _snap_half(max(target, temp_ideal))
+    target = _snap_half(min(max(target, temp_ideal), max_boost_temp))
     return target, "solar_incremental", True

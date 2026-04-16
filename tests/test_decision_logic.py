@@ -620,3 +620,77 @@ class TestMinimumBoostDuration:
         assert rule == "solar_step_down"
         assert boost is True
         assert target == pytest.approx(22.0)  # 22.5 - 0.5
+
+
+# ===========================================================================
+# Maximum boost temperature tests
+# ===========================================================================
+
+class TestMaxBoostTemperature:
+    """Tests for the max_boost_temp ceiling on boosted setpoints."""
+
+    def test_step_up_capped_at_max_boost_temp(self) -> None:
+        """Step-up cannot exceed max_boost_temp even if room_temp + 1.0 allows it."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_export_5min_w=500.0,
+            current_temperature=22.5,
+            current_setpoint=22.5,
+            max_boost_temp=23.0,
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+        assert target == 23.0  # capped at max_boost_temp, not 23.5
+
+    def test_activation_capped_at_max_boost_temp(self) -> None:
+        """Initial boost activation is capped at max_boost_temp."""
+        target, rule, boost = _decide(
+            solar_boost_active=False,
+            avg_export_5min_w=500.0,
+            current_temperature=22.0,
+            current_setpoint=21.0,
+            max_boost_temp=22.0,
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+        assert target == 22.0  # capped, not 22.5
+
+    def test_min_run_capped_at_max_boost_temp(self) -> None:
+        """Min-run hold is capped at max_boost_temp."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            current_temperature=22.5,
+            current_setpoint=23.0,
+            boost_active_seconds=60,
+            min_boost_minutes=20,
+            max_boost_temp=23.0,
+        )
+        assert rule == "solar_min_run"
+        assert boost is True
+        assert target == 23.0  # capped at max_boost_temp
+
+    def test_step_up_below_cap_unaffected(self) -> None:
+        """When target is below max_boost_temp, cap has no effect."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_export_5min_w=500.0,
+            current_temperature=21.0,
+            current_setpoint=21.0,
+            max_boost_temp=25.0,
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+        assert target == 21.5  # normal step-up, well below cap
+
+    def test_step_down_respects_max_boost_temp(self) -> None:
+        """Step-down target is also capped at max_boost_temp."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,
+            current_temperature=24.0,
+            current_setpoint=25.0,
+            max_boost_temp=24.5,
+        )
+        assert rule == "solar_step_down"
+        assert boost is True
+        assert target == 24.5  # capped at max_boost_temp
