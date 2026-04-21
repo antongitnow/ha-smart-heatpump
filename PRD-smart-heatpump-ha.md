@@ -4,7 +4,7 @@
 **Status:** v1.0 — Ready for implementation  
 **License:** MIT  
 **Date:** 2026-03-19  
-**Target:** Claude Code implementation → GitHub push
+**Target:** Home Assistant custom integration
 
 ---
 
@@ -669,4 +669,4 @@ def decide(
 
 ---
 
-*End of PRD v1.0 — Ready for Claude Code implementation*
+*End of PRD v1.0 — Ready for implementation*
