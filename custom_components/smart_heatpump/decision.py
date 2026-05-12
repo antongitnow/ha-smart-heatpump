@@ -20,18 +20,9 @@ def _snap_half(value: float) -> float:
     return floor(value * 2) / 2
 
 
-def is_heating_season(month: int, season_start: int, season_end: int) -> bool:
-    """Check if the given month falls within the heating season.
-
-    Heating season wraps around the year boundary, e.g. start=9 (Sep), end=4 (Apr)
-    means months 9,10,11,12,1,2,3,4 are heating season.
-    """
-    if season_start <= season_end:
-        # e.g. start=1, end=4 → Jan–Apr
-        return season_start <= month <= season_end
-    else:
-        # e.g. start=9, end=4 → Sep–Apr (wraps around year)
-        return month >= season_start or month <= season_end
+def is_active_month(month: int, active_months: set[int]) -> bool:
+    """Check if the given month is in the set of active months."""
+    return month in active_months
 
 
 def decide_solar(
@@ -46,8 +37,7 @@ def decide_solar(
     solar_release_threshold_high: float,
     solar_release_threshold_low: float,
     solar_step_delta: float,
-    season_start_month: int,
-    season_end_month: int,
+    active_months: set[int],
     boost_active_seconds: float = 0.0,
     min_boost_minutes: float = 0.0,
     max_boost_temp: float = 25.0,
@@ -66,8 +56,7 @@ def decide_solar(
         solar_release_threshold_high: 5-min avg import above which boost resets immediately.
         solar_release_threshold_low: 5-min avg import above which boost steps down.
         solar_step_delta: °C to boost above current temp / step down per cycle.
-        season_start_month: First month of heating season (1-12).
-        season_end_month: Last month of heating season (1-12).
+        active_months: Set of months (1-12) when the controller is active.
         boost_active_seconds: How long boost has been active (seconds).
         min_boost_minutes: Minimum boost duration before step-down/reset allowed.
         max_boost_temp: Absolute ceiling for boosted setpoint (°C).
@@ -75,8 +64,8 @@ def decide_solar(
     Returns:
         (target_setpoint, rule_name, new_solar_boost_active)
     """
-    # Not heating season → no solar action
-    if not is_heating_season(current_month, season_start_month, season_end_month):
+    # Not an active month → no solar action
+    if not is_active_month(current_month, active_months):
         return (
             current_setpoint if current_setpoint is not None else temp_ideal,
             "no_solar_action",

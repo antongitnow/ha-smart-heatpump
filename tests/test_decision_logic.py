@@ -32,7 +32,7 @@ _spec = importlib.util.spec_from_file_location("decision", _decision_path)
 _module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_module)
 decide_solar = _module.decide_solar
-is_heating_season = _module.is_heating_season
+is_active_month = _module.is_active_month
 _snap_half = _module._snap_half
 
 # ---------------------------------------------------------------------------
@@ -45,8 +45,7 @@ DEFAULTS = dict(
     solar_release_threshold_high=700.0,
     solar_release_threshold_low=300.0,
     solar_step_delta=0.5,
-    season_start_month=9,
-    season_end_month=4,
+    active_months={1, 2, 3, 4, 9, 10, 11, 12},
 )
 
 
@@ -69,53 +68,46 @@ def _decide(**overrides: object) -> tuple[float, str, bool]:
 # Heating season tests
 # ===========================================================================
 
-class TestHeatingSeasonCheck:
-    """Tests for is_heating_season() logic."""
+class TestActiveMonthCheck:
+    """Tests for is_active_month() logic."""
 
-    def test_heating_season_wrap_around_november(self) -> None:
-        """November is in heating season (Sep-Apr)."""
-        assert is_heating_season(11, 9, 4) is True
+    def test_november_active(self) -> None:
+        """November is in the default active months."""
+        assert is_active_month(11, {1, 2, 3, 4, 9, 10, 11, 12}) is True
 
-    def test_heating_season_wrap_around_january(self) -> None:
-        """January is in heating season (Sep-Apr)."""
-        assert is_heating_season(1, 9, 4) is True
+    def test_january_active(self) -> None:
+        """January is in the default active months."""
+        assert is_active_month(1, {1, 2, 3, 4, 9, 10, 11, 12}) is True
 
-    def test_heating_season_wrap_around_april(self) -> None:
-        """April (end month) is in heating season (Sep-Apr)."""
-        assert is_heating_season(4, 9, 4) is True
+    def test_june_not_active(self) -> None:
+        """June is NOT in the default active months."""
+        assert is_active_month(6, {1, 2, 3, 4, 9, 10, 11, 12}) is False
 
-    def test_heating_season_wrap_around_september(self) -> None:
-        """September (start month) is in heating season (Sep-Apr)."""
-        assert is_heating_season(9, 9, 4) is True
+    def test_single_month(self) -> None:
+        """Only March active."""
+        assert is_active_month(3, {3}) is True
+        assert is_active_month(4, {3}) is False
 
-    def test_not_heating_season_june(self) -> None:
-        """June is NOT in heating season (Sep-Apr)."""
-        assert is_heating_season(6, 9, 4) is False
+    def test_empty_set(self) -> None:
+        """No months active."""
+        assert is_active_month(1, set()) is False
 
-    def test_not_heating_season_august(self) -> None:
-        """August is NOT in heating season (Sep-Apr)."""
-        assert is_heating_season(8, 9, 4) is False
-
-    def test_same_start_end_single_month(self) -> None:
-        """Start=end means only that single month."""
-        assert is_heating_season(3, 3, 3) is True
-        assert is_heating_season(4, 3, 3) is False
-
-    def test_linear_range_jan_to_apr(self) -> None:
-        """Non-wrapping range Jan-Apr."""
-        assert is_heating_season(2, 1, 4) is True
-        assert is_heating_season(5, 1, 4) is False
+    def test_all_months_active(self) -> None:
+        """All months active."""
+        all_months = set(range(1, 13))
+        for m in range(1, 13):
+            assert is_active_month(m, all_months) is True
 
 
 # ===========================================================================
 # Outside heating season — no solar action
 # ===========================================================================
 
-class TestOutsideHeatingSeasonNoAction:
-    """Tests that no action is taken outside heating season."""
+class TestInactiveMonthNoAction:
+    """Tests that no action is taken in inactive months."""
 
-    def test_summer_no_action(self) -> None:
-        """June with solar surplus → no_solar_action (not heating season)."""
+    def test_inactive_month_no_action(self) -> None:
+        """June (inactive) with solar surplus → no_solar_action."""
         target, rule, boost = _decide(
             current_month=6,
             avg_export_5min_w=1000.0,
@@ -123,8 +115,8 @@ class TestOutsideHeatingSeasonNoAction:
         assert rule == "no_solar_action"
         assert boost is False
 
-    def test_summer_preserves_current_setpoint(self) -> None:
-        """Outside heating season, current setpoint is preserved."""
+    def test_inactive_month_preserves_current_setpoint(self) -> None:
+        """Inactive month preserves current setpoint."""
         target, rule, boost = _decide(
             current_month=7,
             current_setpoint=22.0,
@@ -132,8 +124,8 @@ class TestOutsideHeatingSeasonNoAction:
         assert rule == "no_solar_action"
         assert target == pytest.approx(22.0)
 
-    def test_summer_no_setpoint_returns_ideal(self) -> None:
-        """Outside heating season with no setpoint → falls back to ideal."""
+    def test_inactive_month_no_setpoint_returns_ideal(self) -> None:
+        """Inactive month with no setpoint → falls back to ideal."""
         target, rule, boost = _decide(
             current_month=7,
             current_setpoint=None,

@@ -23,6 +23,7 @@ from .const import (
     CONF_TEMP_SENSOR,
     CONF_THERMOSTAT,
     CONF_WEATHER,
+    DEFAULT_ACTIVE_MONTHS,
     DEFAULTS,
     DOMAIN,
     RULE_DESCRIPTIONS,
@@ -52,6 +53,9 @@ class SmartHeatpumpCoordinator:
 
         # Mutable config values — number entities push updates here
         self.config_values: dict[str, float] = dict(DEFAULTS)
+
+        # Active months — month switch entities push updates here
+        self.active_months: set[int] = set(DEFAULT_ACTIVE_MONTHS)
 
         # Switch entity pushes updates here
         self.notifications_enabled: bool = True
@@ -301,8 +305,7 @@ class SmartHeatpumpCoordinator:
             solar_release_threshold_high=cfg["solar_release_threshold_high"],
             solar_release_threshold_low=cfg["solar_release_threshold_low"],
             solar_step_delta=cfg["solar_step_delta"],
-            season_start_month=int(cfg["solar_season_start_month"]),
-            season_end_month=int(cfg["solar_season_end_month"]),
+            active_months=self.active_months,
             boost_active_seconds=boost_active_seconds,
             min_boost_minutes=cfg.get("solar_min_boost_minutes", 0.0),
             max_boost_temp=cfg.get("solar_max_boost_temp", 25.0),

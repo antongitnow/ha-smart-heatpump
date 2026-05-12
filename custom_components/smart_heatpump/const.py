@@ -22,8 +22,6 @@ DEFAULTS: dict[str, float] = {
     "temp_minimum": 20.5,
     "evaluation_interval_min": 5.0,
     # Solar incremental flow
-    "solar_season_start_month": 9.0,   # September
-    "solar_season_end_month": 4.0,     # April
     "solar_surplus_threshold": 300.0,
     "solar_release_threshold_high": 700.0,
     "solar_release_threshold_low": 300.0,
@@ -32,6 +30,24 @@ DEFAULTS: dict[str, float] = {
     "solar_max_boost_temp": 25.0,
 }
 
+# Default active months — Sep through Apr (heating season)
+DEFAULT_ACTIVE_MONTHS: set[int] = {1, 2, 3, 4, 9, 10, 11, 12}
+
+MONTH_NAMES: list[tuple[int, str]] = [
+    (1, "January"),
+    (2, "February"),
+    (3, "March"),
+    (4, "April"),
+    (5, "May"),
+    (6, "June"),
+    (7, "July"),
+    (8, "August"),
+    (9, "September"),
+    (10, "October"),
+    (11, "November"),
+    (12, "December"),
+]
+
 # ---------------------------------------------------------------------------
 # Number entity definitions: (key, name, min, max, step, unit, icon)
 # ---------------------------------------------------------------------------
@@ -39,8 +55,6 @@ NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]] = [
     ("temp_ideal", "Ideal temperature", 16, 26, 0.5, "°C", "mdi:thermometer"),
     ("temp_minimum", "Minimum temperature", 14, 24, 0.5, "°C", "mdi:thermometer-low"),
     ("evaluation_interval_min", "Evaluation interval", 1, 60, 1, "min", "mdi:refresh"),
-    ("solar_season_start_month", "Heating season start month", 1, 12, 1, "month", "mdi:calendar-start"),
-    ("solar_season_end_month", "Heating season end month", 1, 12, 1, "month", "mdi:calendar-end"),
     ("solar_surplus_threshold", "Solar surplus threshold", 0, 5000, 50, "W", "mdi:solar-panel"),
     ("solar_release_threshold_high", "Solar release threshold high", 0, 5000, 50, "W", "mdi:transmission-tower-import"),
     ("solar_release_threshold_low", "Solar release threshold low", 0, 5000, 50, "W", "mdi:transmission-tower-import"),
