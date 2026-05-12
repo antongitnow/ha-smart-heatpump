@@ -13,6 +13,7 @@ CONF_TEMP_SENSOR = "temp_sensor_entity"
 # Options entry keys (set via Configure button)
 CONF_FORECAST_SOLAR = "forecast_solar_entity"
 CONF_NOTIFY_TARGETS = "notify_targets"
+CONF_ACTIVE_MONTHS = "active_months"
 
 # ---------------------------------------------------------------------------
 # Defaults — used as initial values for number entities on first install
@@ -31,21 +32,23 @@ DEFAULTS: dict[str, float] = {
 }
 
 # Default active months — Sep through Apr (heating season)
-DEFAULT_ACTIVE_MONTHS: set[int] = {1, 2, 3, 4, 9, 10, 11, 12}
+DEFAULT_ACTIVE_MONTHS: list[str] = [
+    "1", "2", "3", "4", "9", "10", "11", "12",
+]
 
-MONTH_NAMES: list[tuple[int, str]] = [
-    (1, "January"),
-    (2, "February"),
-    (3, "March"),
-    (4, "April"),
-    (5, "May"),
-    (6, "June"),
-    (7, "July"),
-    (8, "August"),
-    (9, "September"),
-    (10, "October"),
-    (11, "November"),
-    (12, "December"),
+MONTH_OPTIONS: list[tuple[str, str]] = [
+    ("1", "January"),
+    ("2", "February"),
+    ("3", "March"),
+    ("4", "April"),
+    ("5", "May"),
+    ("6", "June"),
+    ("7", "July"),
+    ("8", "August"),
+    ("9", "September"),
+    ("10", "October"),
+    ("11", "November"),
+    ("12", "December"),
 ]
 
 # ---------------------------------------------------------------------------

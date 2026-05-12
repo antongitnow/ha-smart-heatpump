@@ -12,7 +12,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 import logging
 
-from .const import DEFAULT_ACTIVE_MONTHS, DOMAIN, MONTH_NAMES
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,13 +24,10 @@ async def async_setup_entry(
 ) -> None:
     """Set up switch entities from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    entities: list[SwitchEntity] = [
+    async_add_entities([
         SmartHeatpumpNotificationSwitch(coordinator),
         SmartHeatpumpDryRunSwitch(coordinator),
-    ]
-    for month_num, month_name in MONTH_NAMES:
-        entities.append(ActiveMonthSwitch(coordinator, month_num, month_name))
-    async_add_entities(entities)
+    ])
 
 
 class SmartHeatpumpNotificationSwitch(RestoreEntity, SwitchEntity):
@@ -145,50 +142,3 @@ class SmartHeatpumpDryRunSwitch(RestoreEntity, SwitchEntity):
                 )
             except Exception:
                 _LOGGER.warning("Failed to send dry run notification to '%s'", target_name)
-
-
-class ActiveMonthSwitch(RestoreEntity, SwitchEntity):
-    """Toggle whether the controller is active in a specific month."""
-
-    _attr_has_entity_name = True
-    _attr_icon = "mdi:calendar-month"
-    _attr_entity_category = EntityCategory.CONFIG
-
-    def __init__(self, coordinator, month_num: int, month_name: str) -> None:
-        self._coordinator = coordinator
-        self._month_num = month_num
-        self._attr_translation_key = f"active_month_{month_num}"
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_active_month_{month_num}"
-        self._attr_is_on = month_num in DEFAULT_ACTIVE_MONTHS
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._coordinator.entry.entry_id)},
-            name="Smart Heatpump Controller",
-            manufacturer="Smart Heatpump",
-            model="v2",
-        )
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        last = await self.async_get_last_state()
-        if last and last.state is not None:
-            self._attr_is_on = last.state == "on"
-        self._sync_to_coordinator()
-
-    async def async_turn_on(self, **kwargs) -> None:
-        self._attr_is_on = True
-        self._sync_to_coordinator()
-        self.async_write_ha_state()
-
-    async def async_turn_off(self, **kwargs) -> None:
-        self._attr_is_on = False
-        self._sync_to_coordinator()
-        self.async_write_ha_state()
-
-    def _sync_to_coordinator(self) -> None:
-        if self._attr_is_on:
-            self._coordinator.active_months.add(self._month_num)
-        else:
-            self._coordinator.active_months.discard(self._month_num)

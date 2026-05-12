@@ -17,6 +17,7 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_ACTIVE_MONTHS,
     CONF_FORECAST_SOLAR,
     CONF_NOTIFY_TARGETS,
     CONF_P1_POWER,
@@ -54,8 +55,7 @@ class SmartHeatpumpCoordinator:
         # Mutable config values — number entities push updates here
         self.config_values: dict[str, float] = dict(DEFAULTS)
 
-        # Active months — month switch entities push updates here
-        self.active_months: set[int] = set(DEFAULT_ACTIVE_MONTHS)
+        # Active months — read from options (set via Configure dialog)
 
         # Switch entity pushes updates here
         self.notifications_enabled: bool = True
@@ -123,6 +123,16 @@ class SmartHeatpumpCoordinator:
     # ------------------------------------------------------------------
     # Options helpers
     # ------------------------------------------------------------------
+
+    @property
+    def active_months(self) -> set[int]:
+        """Get active months from options."""
+        raw = self._opt(CONF_ACTIVE_MONTHS)
+        if not raw:
+            return {int(m) for m in DEFAULT_ACTIVE_MONTHS}
+        if isinstance(raw, list):
+            return {int(m) for m in raw}
+        return {int(m) for m in DEFAULT_ACTIVE_MONTHS}
 
     @property
     def forecast_solar_entity(self) -> str | None:

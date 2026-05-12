@@ -15,13 +15,16 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_ACTIVE_MONTHS,
     CONF_FORECAST_SOLAR,
     CONF_NOTIFY_TARGETS,
     CONF_P1_POWER,
     CONF_TEMP_SENSOR,
     CONF_THERMOSTAT,
     CONF_WEATHER,
+    DEFAULT_ACTIVE_MONTHS,
     DOMAIN,
+    MONTH_OPTIONS,
 )
 
 
@@ -151,6 +154,21 @@ class SmartHeatpumpOptionsFlow(OptionsFlow):
                     },
                 ): selector.TextSelector(
                     selector.TextSelectorConfig(multiline=False)
+                ),
+                vol.Required(
+                    CONF_ACTIVE_MONTHS,
+                    default=current.get(
+                        CONF_ACTIVE_MONTHS, DEFAULT_ACTIVE_MONTHS
+                    ),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            selector.SelectOptionDict(value=v, label=l)
+                            for v, l in MONTH_OPTIONS
+                        ],
+                        multiple=True,
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
                 ),
             }
         )

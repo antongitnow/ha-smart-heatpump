@@ -31,7 +31,8 @@
           "p1_net_power_entity": "Net grid power sensor (W)",
           "weather_entity": "Weather entity",
           "forecast_solar_entity": "Forecast.Solar — predicted production next hour",
-          "notify_targets": "Notification targets"
+          "notify_targets": "Notification targets",
+          "active_months": "Active months"
         },
         "data_description": {
           "thermostat_entity": "The climate entity that controls your heat pump. Leave empty for dry run mode.",
@@ -39,7 +40,8 @@
           "p1_net_power_entity": "Smart meter sensor in Watts. Positive = importing, negative = exporting solar.",
           "weather_entity": "Weather entity providing outdoor temperature and forecast.",
           "forecast_solar_entity": "Paste the entity ID of your Forecast.Solar 'next hour' sensor (e.g. sensor.energy_next_hour). Leave empty if not installed.",
-          "notify_targets": "Comma-separated notify service names without the 'notify.' prefix. Example: mobile_app_my_phone, telegram"
+          "notify_targets": "Comma-separated notify service names without the 'notify.' prefix. Example: mobile_app_my_phone, telegram",
+          "active_months": "Select the months when the controller should be active."
         }
       }
     },
@@ -65,19 +67,7 @@
     },
     "switch": {
       "notifications_enabled": { "name": "Notifications" },
-      "dry_run": { "name": "Dry run" },
-      "active_month_1": { "name": "Active in January" },
-      "active_month_2": { "name": "Active in February" },
-      "active_month_3": { "name": "Active in March" },
-      "active_month_4": { "name": "Active in April" },
-      "active_month_5": { "name": "Active in May" },
-      "active_month_6": { "name": "Active in June" },
-      "active_month_7": { "name": "Active in July" },
-      "active_month_8": { "name": "Active in August" },
-      "active_month_9": { "name": "Active in September" },
-      "active_month_10": { "name": "Active in October" },
-      "active_month_11": { "name": "Active in November" },
-      "active_month_12": { "name": "Active in December" }
+      "dry_run": { "name": "Dry run" }
     }
   }
 }
