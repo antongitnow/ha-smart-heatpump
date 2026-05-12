@@ -29,6 +29,7 @@ DEFAULTS: dict[str, float] = {
     "solar_step_delta": 0.5,
     "solar_min_boost_minutes": 20.0,
     "solar_max_boost_temp": 25.0,
+    "forecast_temp_skip_threshold": 15.0,
 }
 
 # Default active months — Sep through Apr (heating season)
@@ -64,6 +65,7 @@ NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]] = [
     ("solar_step_delta", "Solar step delta", 0.1, 3.0, 0.1, "°C", "mdi:thermometer-plus"),
     ("solar_min_boost_minutes", "Minimum boost duration", 0, 60, 5, "min", "mdi:timer-outline"),
     ("solar_max_boost_temp", "Maximum boost temperature", 10, 30, 0.5, "°C", "mdi:thermometer-high"),
+    ("forecast_temp_skip_threshold", "Forecast skip threshold", 5, 30, 0.5, "°C", "mdi:thermometer-alert"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -78,6 +80,7 @@ RULE_DESCRIPTIONS: dict[str, str] = {
     "solar_boost_holding": "Solar boost active - holding setpoint",
     "solar_min_run": "Minimum run time - keeping boost active",
     "default": "Normal operation",
+    "forecast_warm": "Forecast too warm — skipping solar boost",
     "error_fallback": "Error - using safe fallback temperature",
     "initialising": "Controller starting up",
 }

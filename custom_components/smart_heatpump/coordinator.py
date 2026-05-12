@@ -263,6 +263,20 @@ class SmartHeatpumpCoordinator:
         else:
             self.hours_until_below_ideal = None
 
+        # ---- Forecast temperature gate ----
+        forecast_skip_threshold = cfg.get("forecast_temp_skip_threshold", 15.0)
+        if forecast_temps:
+            avg_forecast_temp = sum(forecast_temps) / len(forecast_temps)
+            if avg_forecast_temp >= forecast_skip_threshold:
+                _LOGGER.info(
+                    "Skipping solar boost — 24h forecast avg %.1f°C >= threshold %.1f°C",
+                    avg_forecast_temp,
+                    forecast_skip_threshold,
+                )
+                self.active_rule = "forecast_warm"
+                self._notify_listeners()
+                return
+
         # ---- 5-minute rolling averages from P1 history ----
         # Query HA's recorder for all P1 readings in the last N minutes.
         # The P1 meter reports every ~10s, giving ~30 readings per 5-min window.
