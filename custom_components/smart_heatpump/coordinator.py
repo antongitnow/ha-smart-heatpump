@@ -81,6 +81,7 @@ class SmartHeatpumpCoordinator:
         self._last_net_power: float | None = None
         self._last_outdoor_temp: float | None = None
         self._last_indoor_temp: float | None = None
+        self._last_avg_forecast_temp: float | None = None
 
     def _opt(self, key: str, default: str = "") -> str:
         """Read a config value from options (primary) or data (migration fallback)."""
@@ -267,6 +268,7 @@ class SmartHeatpumpCoordinator:
         forecast_skip_threshold = cfg.get("forecast_temp_skip_threshold", 15.0)
         if forecast_temps:
             avg_forecast_temp = sum(forecast_temps) / len(forecast_temps)
+            self._last_avg_forecast_temp = round(avg_forecast_temp, 1)
             if avg_forecast_temp >= forecast_skip_threshold:
                 _LOGGER.info(
                     "Skipping solar boost — 24h forecast avg %.1f°C >= threshold %.1f°C",
@@ -690,6 +692,7 @@ class SmartHeatpumpCoordinator:
             avg_import_5min=avg_import_5min,
             dry_run=self.dry_run,
             config=cfg,
+            forecast_avg_24h=self._last_avg_forecast_temp,
         )
 
         _LOGGER.warning("Sending notification to targets: %s | message_len=%d", targets, len(message))

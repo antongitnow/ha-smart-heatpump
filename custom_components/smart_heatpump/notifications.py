@@ -18,6 +18,7 @@ def format_notification(
     avg_import_5min: float,
     dry_run: bool,
     config: dict[str, float],
+    forecast_avg_24h: float | None = None,
 ) -> tuple[str, str]:
     """Build notification title and message for a setpoint change.
 
@@ -57,6 +58,7 @@ def format_notification(
         f"Rule: {safe_rule}{dry_run_tag}\n"
         f"Room: {indoor_str}\n"
         f"Outdoor: {outdoor_str}\n"
+        f"Forecast avg 24h: {f'{forecast_avg_24h:.1f}C' if forecast_avg_24h is not None else 'N/A'}\n"
         f"Setpoint: {old_str} to {new_setpoint:.1f}C\n"
         f"\n"
         f"Current power: {current_power_str}\n"

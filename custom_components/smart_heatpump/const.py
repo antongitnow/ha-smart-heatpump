@@ -80,7 +80,7 @@ RULE_DESCRIPTIONS: dict[str, str] = {
     "solar_boost_holding": "Solar boost active - holding setpoint",
     "solar_min_run": "Minimum run time - keeping boost active",
     "default": "Normal operation",
-    "forecast_warm": "Forecast too warm — skipping solar boost",
+    "forecast_warm": "Forecast too warm - skipping solar boost",
     "error_fallback": "Error - using safe fallback temperature",
     "initialising": "Controller starting up",
 }
