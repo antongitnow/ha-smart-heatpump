@@ -192,6 +192,20 @@ class TestMessageContent:
         _, message = _format(net_power=None)
         assert "N/A" in message
 
+    def test_avg_export_format(self) -> None:
+        """Negative avg_import_5min (net export) must show as 'Export XW'."""
+        _, message = _format(avg_import_5min=-1500.0)
+        assert "Export 1500W" in message
+        assert "5-min avg" in message
+
+    def test_avg_import_format(self) -> None:
+        _, message = _format(avg_import_5min=400.0)
+        assert "Import 400W" in message
+
+    def test_avg_zero_shows_import(self) -> None:
+        _, message = _format(avg_import_5min=0.0)
+        assert "Import 0W" in message
+
     def test_thresholds_in_message(self) -> None:
         _, message = _format()
         assert "300W export" in message

@@ -294,7 +294,7 @@ class SmartHeatpumpCoordinator:
             self.active_rule = "waiting_for_data"
             self._notify_listeners()
             return
-        avg_export_5min, avg_import_5min = p1_averages
+        avg_export_5min, avg_import_5min, avg_net_5min = p1_averages
         self._last_avg_import_5min = avg_import_5min
 
         # ---- Read current setpoint ----
@@ -378,7 +378,7 @@ class SmartHeatpumpCoordinator:
                     outdoor_temp=outdoor_temp,
                     indoor_temp=indoor_temp,
                     net_power=net_power,
-                    avg_import_5min=avg_import_5min,
+                    avg_import_5min=avg_net_5min,
                 )
         else:
             setpoint_changed = is_actionable and (
@@ -401,7 +401,7 @@ class SmartHeatpumpCoordinator:
                     outdoor_temp=outdoor_temp,
                     indoor_temp=indoor_temp,
                     net_power=net_power,
-                    avg_import_5min=avg_import_5min,
+                    avg_import_5min=avg_net_5min,
                 )
             else:
                 _LOGGER.debug(
@@ -450,7 +450,7 @@ class SmartHeatpumpCoordinator:
                 pass
         return False
 
-    async def _async_read_p1_averages(self) -> tuple[float, float] | None:
+    async def _async_read_p1_averages(self) -> tuple[float, float, float] | None:
         """Query HA recorder for P1 power readings over the last N minutes.
 
         Returns (avg_export_watts, avg_import_watts), or None if there is
@@ -513,7 +513,7 @@ class SmartHeatpumpCoordinator:
             "P1 5-min avg: %d readings | net=%.0fW | export=%.0fW | import=%.0fW",
             len(readings), avg_net, avg_export, avg_import,
         )
-        return avg_export, avg_import
+        return avg_export, avg_import, avg_net
 
     def _read_outdoor_temp(self) -> float | None:
         """Read outdoor temperature from the weather entity."""

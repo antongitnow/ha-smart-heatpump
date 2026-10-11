@@ -42,8 +42,11 @@ def format_notification(
     else:
         current_power_str = "N/A"
 
-    # 5-min average: show as import
-    avg_str = f"Import {avg_import_5min:.0f}W"
+    # 5-min average: negative means export, positive means import
+    if avg_import_5min < 0:
+        avg_str = f"Export {abs(avg_import_5min):.0f}W"
+    else:
+        avg_str = f"Import {avg_import_5min:.0f}W"
 
     # Sanitize: underscores break Telegram Markdown parser,
     # square brackets are Markdown link syntax
