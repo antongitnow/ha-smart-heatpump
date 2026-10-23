@@ -277,7 +277,8 @@ class TestSolarBoostActiveImportChecks:
         """Low import → continue boosting (setpoint = current_setpoint + delta)."""
         target, rule, boost = _decide(
             solar_boost_active=True,
-            avg_import_5min_w=100.0,
+            avg_import_5min_w=0.0,
+            avg_export_5min_w=400.0,
             current_temperature=22.0,
             current_setpoint=22.5,
         )
@@ -289,7 +290,8 @@ class TestSolarBoostActiveImportChecks:
         """Setpoint cannot exceed current room temp + 1.0°C."""
         target, rule, boost = _decide(
             solar_boost_active=True,
-            avg_import_5min_w=100.0,
+            avg_import_5min_w=0.0,
+            avg_export_5min_w=400.0,
             current_temperature=22.0,
             current_setpoint=23.0,  # 23.0 + 0.5 = 23.5, but cap is 22.0 + 1.0 = 23.0
         )
@@ -302,7 +304,8 @@ class TestSolarBoostActiveImportChecks:
         # Room warmed up to 22.5, setpoint is also 22.5 → must go to 23.0
         target, rule, boost = _decide(
             solar_boost_active=True,
-            avg_import_5min_w=100.0,
+            avg_import_5min_w=0.0,
+            avg_export_5min_w=400.0,
             current_temperature=22.5,
             current_setpoint=22.5,
         )
@@ -315,7 +318,8 @@ class TestSolarBoostActiveImportChecks:
         # Room is 22.0, setpoint somehow at 22.0 → must go to at least 22.5
         target, rule, boost = _decide(
             solar_boost_active=True,
-            avg_import_5min_w=100.0,
+            avg_import_5min_w=0.0,
+            avg_export_5min_w=400.0,
             current_temperature=22.0,
             current_setpoint=22.0,
         )
@@ -350,14 +354,39 @@ class TestThresholdBoundaries:
         assert rule != "solar_reset"
 
     def test_import_exactly_at_low_threshold_no_step_down(self) -> None:
-        """Import exactly at low threshold → no step down (> not >=)."""
+        """Import exactly at low threshold → no step down (> not >=), setpoint held."""
         target, rule, boost = _decide(
             solar_boost_active=True,
             avg_import_5min_w=300.0,  # not > 300
             current_temperature=22.0,
             current_setpoint=22.5,
         )
-        assert rule == "solar_incremental"
+        assert rule == "solar_boost_holding"
+        assert boost is True
+        assert target == pytest.approx(22.5)
+
+    def test_small_import_holds_setpoint_no_step_up(self) -> None:
+        """Regression: boost active, 196W import (below release low) → hold, never step up."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=196.0,
+            current_temperature=22.5,
+            current_setpoint=23.0,
+        )
+        assert rule == "solar_boost_holding"
+        assert boost is True
+        assert target == pytest.approx(23.0)
+
+    def test_small_export_below_surplus_holds(self) -> None:
+        """Export below the surplus threshold is not enough to keep stepping up."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_export_5min_w=200.0,
+            current_temperature=22.5,
+            current_setpoint=23.0,
+        )
+        assert rule == "solar_boost_holding"
+        assert target == pytest.approx(23.0)
 
 
 # ===========================================================================
@@ -423,6 +452,7 @@ class TestEdgeCases:
         target, rule, boost = _decide(
             solar_boost_active=True,
             avg_import_5min_w=0.0,
+            avg_export_5min_w=400.0,
             current_temperature=22.0,
             current_setpoint=None,
         )
@@ -435,6 +465,7 @@ class TestEdgeCases:
         target, rule, boost = _decide(
             solar_boost_active=True,
             avg_import_5min_w=0.0,
+            avg_export_5min_w=400.0,
             current_temperature=None,
             current_setpoint=None,
         )
@@ -486,6 +517,7 @@ class TestSetpointRounding:
         target, rule, boost = _decide(
             solar_boost_active=True,
             avg_import_5min_w=0.0,
+            avg_export_5min_w=400.0,
             current_temperature=21.699,
             current_setpoint=22.0,
         )

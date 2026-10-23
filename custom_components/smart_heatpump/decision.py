@@ -126,7 +126,17 @@ def decide_solar(
 
         return target, "solar_step_down", True
 
-    # No excess import — boost: step up from current setpoint
+    # Import is below the release threshold, but only keep stepping up while
+    # there is real surplus. In the dead band (small import / small export)
+    # hold the setpoint — raising it there would just pull more from the grid.
+    if avg_export_5min_w <= solar_surplus_threshold:
+        return (
+            current_setpoint if current_setpoint is not None else temp_ideal,
+            "solar_boost_holding",
+            True,
+        )
+
+    # Surplus — boost: step up from current setpoint
     # Always stay between room_temp + delta and room_temp + 1.0°C
     if current_setpoint is not None:
         target = current_setpoint + solar_step_delta

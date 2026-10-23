@@ -41,7 +41,13 @@ flowchart TD
 
     MID_IMPORT{"5-min avg import<br/>> release threshold low W?"}
     MID_IMPORT -- Yes --> STEP_DOWN
-    MID_IMPORT -- No --> SOLAR_ON
+    MID_IMPORT -- No --> SURPLUS_KEEP
+
+    SURPLUS_KEEP{"5-min avg export<br/>> surplus threshold W?"}
+    SURPLUS_KEEP -- Yes --> SOLAR_ON
+    SURPLUS_KEEP -- No --> HOLD
+
+    HOLD[/"solar_boost_holding<br/>setpoint unchanged"/]
 
     SOLAR_ON[/"solar_incremental<br/>setpoint = current_setpoint<br/>+ step_delta °C<br/>(max room_temp + 1.0°C)"/]
 
@@ -50,6 +56,7 @@ flowchart TD
     RESET_NOW[/"solar_reset<br/>setpoint = ideal temp<br/>Deactivate boost"/]
 
     SOLAR_ON --> DONE
+    HOLD --> DONE
     STEP_DOWN --> DEACT_CHECK
     RESET_NOW --> DONE
     DONE_SKIP --> DONE
