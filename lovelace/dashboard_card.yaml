@@ -64,7 +64,7 @@ entities:
     label: Solar settings
 
   - entity: number.smart_heatpump_controller_solar_surplus_threshold
-    name: Solar surplus threshold
+    name: Solar export surplus threshold
 
   - entity: number.smart_heatpump_controller_solar_confirmation_delay
     name: Solar confirmation delay

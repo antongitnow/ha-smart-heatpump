@@ -68,9 +68,9 @@ def format_notification(
         f"5-min avg: {avg_str}\n"
         f"\n"
         f"Thresholds:\n"
-        f"  Surplus activate: {config['solar_surplus_threshold']:.0f}W export\n"
+        f"  Export surplus activate: {config['solar_surplus_threshold']:.0f}W export\n"
         f"  Release high: {config['solar_release_threshold_high']:.0f}W import\n"
-        f"  Release low: {config['solar_release_threshold_low']:.0f}W import\n"
+        f"  Import release low: {config['solar_release_threshold_low']:.0f}W import\n"
         f"  Step delta: {config['solar_step_delta']:.1f}C"
     )
 

@@ -147,9 +147,9 @@ All parameters appear as slider entities under the **Smart Heatpump Controller**
 | Evaluation interval | 5 | 1–60 | min | How often the controller re-evaluates |
 | Heating season start month | 9 | 1–12 | month | First month of heating season (e.g. 9 = September) |
 | Heating season end month | 4 | 1–12 | month | Last month of heating season (e.g. 4 = April) |
-| Solar surplus threshold | 300 | 0–5000 | W | 5-min avg export above which solar boost activates |
+| Solar export surplus threshold | 300 | 0–5000 | W | 5-min avg export above which solar boost activates |
 | Solar release threshold high | 700 | 0–5000 | W | 5-min avg import above which boost resets immediately |
-| Solar release threshold low | 300 | 0–5000 | W | 5-min avg import above which boost steps down |
+| Solar release import threshold low | 300 | 0–5000 | W | 5-min avg import above which boost steps down |
 | Solar step delta | 0.5 | 0.1–3.0 | °C | How much to boost/step-down per cycle |
 
 ---
@@ -182,9 +182,9 @@ Use the **Notifications** switch on the device or dashboard to mute/unmute witho
 > 5-min avg: Import 0W
 >
 > Thresholds:
-> &nbsp;&nbsp;Surplus activate: >300W avg export
+> &nbsp;&nbsp;Export surplus activate: >300W avg export
 > &nbsp;&nbsp;Release high: >700W avg import
-> &nbsp;&nbsp;Release low: >300W avg import
+> &nbsp;&nbsp;Import release low: >300W avg import
 > &nbsp;&nbsp;Step delta: 0.5°C
 
 ---
@@ -236,12 +236,12 @@ The sensor also exposes these attributes:
 ### Solar boost not triggering
 
 - Your power sensor must return **negative values** when exporting. Check in **Settings → Developer tools → States**.
-- Real-time export must exceed the **Solar surplus threshold**.
+- Real-time export must exceed the **Solar export surplus threshold**.
 - Verify you are within the configured **heating season** months.
 
 ### Solar boost stops too quickly
 
-- Lower the **Solar release threshold low** to tolerate more import before stepping down.
+- Lower the **Solar release import threshold low** to tolerate more import before stepping down.
 - Lower the **Solar release threshold high** to tolerate more import before resetting.
 - The 5-minute rolling average smooths out brief spikes. If you see false resets from short-lived import (e.g. kettle), the average should handle it.
 
