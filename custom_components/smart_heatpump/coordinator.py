@@ -13,12 +13,18 @@ from typing import Any
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_state_change_event,
+    async_track_time_interval,
+)
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_ACTIVE_MONTHS,
     CONF_FORECAST_SOLAR,
+    CONF_HEATPUMP_POWER,
     CONF_NOTIFY_TARGETS,
     CONF_P1_POWER,
     CONF_TEMP_SENSOR,
@@ -31,6 +37,7 @@ from .const import (
 )
 from .decision import decide_solar
 from .notifications import format_notification
+from .solar_energy import SolarEnergyTracker
 from .thermal_model import predict_hours_until_below
 from .thermal_store import ThermalStore
 
@@ -43,6 +50,12 @@ _AVG_WINDOW_MINUTES = 5
 # The P1 meter reports every ~10s, so 5 minutes should yield ~30 readings.
 # Require at least 3 to avoid acting on stale/sparse data after HA restart.
 _MIN_READINGS_FOR_AVG = 3
+
+# How often solar energy is integrated when no sensor reports a change, and
+# how often the energy sensors refresh their state.
+_ENERGY_HEARTBEAT = timedelta(minutes=1)
+_ENERGY_STORAGE_KEY = "smart_heatpump_solar_energy"
+_ENERGY_SAVE_DELAY_S = 60
 
 
 class SmartHeatpumpCoordinator:
@@ -62,6 +75,13 @@ class SmartHeatpumpCoordinator:
 
         # Thermal learning (continues independently — not used for thermostat control)
         self.thermal_store = ThermalStore(hass, entry.entry_id)
+
+        # Solar-powered heat pump energy (only fed when a heat pump power sensor is set)
+        self.solar_energy = SolarEnergyTracker()
+        self._energy_store: Store = Store(
+            hass, 1, f"{_ENERGY_STORAGE_KEY}_{entry.entry_id}"
+        )
+        self._energy_unsubs: list[CALLBACK_TYPE] = []
 
         # Evaluation state
         self.active_rule: str = "initialising"
@@ -142,6 +162,12 @@ class SmartHeatpumpCoordinator:
         return entity if entity else None
 
     @property
+    def heatpump_power_entity(self) -> str | None:
+        """Get the heat pump power entity from options."""
+        entity = self._opt(CONF_HEATPUMP_POWER)
+        return entity if entity else None
+
+    @property
     def notify_targets(self) -> list[str]:
         """Get notification targets from options."""
         raw = self._opt(CONF_NOTIFY_TARGETS)
@@ -157,6 +183,8 @@ class SmartHeatpumpCoordinator:
         # Recover boost state after HA restart — if the thermostat setpoint
         # is above ideal, a boost was likely active before shutdown.
         self._recover_boost_state()
+
+        self._start_energy_tracking()
 
         # First evaluation after a short delay to let entities restore
         self._cancel_timer = async_call_later(
@@ -191,6 +219,11 @@ class SmartHeatpumpCoordinator:
         if self._cancel_timer:
             self._cancel_timer()
             self._cancel_timer = None
+        for unsub in self._energy_unsubs:
+            unsub()
+        self._energy_unsubs.clear()
+        if self.heatpump_power_entity:
+            self._energy_store.async_delay_save(self.solar_energy.to_dict, 0)
 
     async def _async_evaluate_callback(self, _now: Any = None) -> None:
         """Timer callback — wraps evaluate with error recovery."""
@@ -339,6 +372,9 @@ class SmartHeatpumpCoordinator:
 
         prev_boost_active = self._solar_boost_active
         self._solar_boost_active = new_boost_active
+        if new_boost_active != prev_boost_active:
+            # Close the interval under the old flag, start the next under the new one
+            self._record_energy()
 
         # Track when boost was activated
         if new_boost_active and not prev_boost_active:
@@ -414,6 +450,82 @@ class SmartHeatpumpCoordinator:
         self.last_target = target
         self.active_rule = rule
         self._notify_listeners()
+
+    # ------------------------------------------------------------------
+    # Solar-powered heat pump energy
+    # ------------------------------------------------------------------
+
+    async def async_load_energy(self) -> None:
+        """Load persisted solar energy totals."""
+        data = await self._energy_store.async_load()
+        if data:
+            self.solar_energy.load_dict(data)
+
+    @callback
+    def _start_energy_tracking(self) -> None:
+        """Integrate on every heat pump / P1 reading, plus a 1-minute heartbeat."""
+        hp_entity = self.heatpump_power_entity
+        if not hp_entity:
+            return
+
+        entities = [hp_entity]
+        p1_entity = self._opt(CONF_P1_POWER)
+        if p1_entity:
+            entities.append(p1_entity)
+
+        @callback
+        def _on_state_change(_event: Any) -> None:
+            self._record_energy()
+
+        @callback
+        def _on_heartbeat(_now: Any) -> None:
+            self._record_energy()
+            self._notify_listeners()
+
+        self._energy_unsubs.append(
+            async_track_state_change_event(self.hass, entities, _on_state_change)
+        )
+        self._energy_unsubs.append(
+            async_track_time_interval(self.hass, _on_heartbeat, _ENERGY_HEARTBEAT)
+        )
+        self._record_energy()
+
+    @callback
+    def _record_energy(self) -> None:
+        """Feed the current readings to the solar energy tracker.
+
+        Counts as "boost" only when the controller is really steering the
+        thermostat — in dry run the heat pump is not being boosted.
+        """
+        if not self.heatpump_power_entity:
+            return
+        boost = self._solar_boost_active and not self.dry_run
+        added = self.solar_energy.update(
+            ts=dt_util.utcnow().timestamp(),
+            day=dt_util.now().date().isoformat(),
+            heatpump_w=self._read_power_w(self.heatpump_power_entity),
+            net_w=self._read_power_w(self._opt(CONF_P1_POWER)),
+            boost_active=boost,
+        )
+        if added:
+            self._energy_store.async_delay_save(
+                self.solar_energy.to_dict, _ENERGY_SAVE_DELAY_S
+            )
+
+    def _read_power_w(self, entity_id: str) -> float | None:
+        """Read a power sensor in watts (converts kW), without logging noise."""
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in ("unavailable", "unknown", ""):
+            return None
+        try:
+            value = float(state.state)
+        except (TypeError, ValueError):
+            return None
+        if state.attributes.get("unit_of_measurement") == "kW":
+            value *= 1000.0
+        return value
 
     # ------------------------------------------------------------------
     # Sensor readers

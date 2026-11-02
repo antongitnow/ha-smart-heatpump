@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
-from homeassistant.components.sensor import SensorEntity
+from datetime import datetime, timedelta
+
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
+from homeassistant.const import UnitOfEnergy
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, RULE_DESCRIPTIONS
 from .thermal_model import MIN_SAMPLES, count_valid_cooling_samples
@@ -19,10 +27,16 @@ async def async_setup_entry(
 ) -> None:
     """Set up sensor entities from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([
+    entities: list[SensorEntity] = [
         SmartHeatpumpRuleSensor(coordinator),
         ThermalLearningSensor(coordinator),
-    ])
+    ]
+    if coordinator.heatpump_power_entity:
+        entities += [
+            SolarEnergyTotalSensor(coordinator),
+            SolarEnergyTodaySensor(coordinator),
+        ]
+    async_add_entities(entities)
 
 
 class _BaseSensor(SensorEntity):
@@ -142,4 +156,85 @@ class ThermalLearningSensor(_BaseSensor):
             else:
                 attrs["hours_until_below_ideal"] = round(h, 1)
 
+        return attrs
+
+
+class SolarEnergyTotalSensor(_BaseSensor):
+    """Lifetime kWh the heat pump used on solar surplus during a boost.
+
+    A total_increasing energy sensor, so Home Assistant's long-term statistics
+    (and the Energy dashboard / statistics-graph card) give per-day, per-week
+    and per-month bars for free.
+    """
+
+    _attr_translation_key = "solar_energy_total"
+    _attr_icon = "mdi:solar-power-variant"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_solar_energy_total"
+
+    @property
+    def native_value(self) -> float:
+        return round(self._coordinator.solar_energy.total_solar_kwh, 3)
+
+
+class SolarEnergyTodaySensor(_BaseSensor):
+    """Solar-powered heat pump kWh today, with share and recent history."""
+
+    _attr_translation_key = "solar_energy_today"
+    _attr_icon = "mdi:weather-sunny"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_solar_energy_today"
+
+    @property
+    def last_reset(self) -> datetime:
+        return dt_util.start_of_local_day()
+
+    @property
+    def native_value(self) -> float:
+        today = dt_util.now().date().isoformat()
+        return round(self._coordinator.solar_energy.solar_kwh(today), 3)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        tracker = self._coordinator.solar_energy
+        today = dt_util.now().date()
+        key = today.isoformat()
+        yesterday = today - timedelta(days=1)
+
+        attrs: dict[str, object] = {
+            "heatpump_kwh_today": round(tracker.total_kwh(key), 3),
+            "solar_share_today_pct": (
+                round(share, 1) if (share := tracker.solar_share_pct(key)) is not None else None
+            ),
+            "solar_kwh_yesterday": round(tracker.solar_kwh(yesterday.isoformat()), 3),
+            "solar_kwh_last_7_days": round(
+                tracker.solar_kwh_since(today - timedelta(days=6), today), 3
+            ),
+            "solar_kwh_this_month": round(
+                tracker.solar_kwh_since(today.replace(day=1), today), 3
+            ),
+            "heatpump_kwh_this_month": round(
+                tracker.total_kwh_since(today.replace(day=1), today), 3
+            ),
+            "solar_kwh_per_day": {
+                (today - timedelta(days=i)).isoformat(): round(
+                    tracker.solar_kwh((today - timedelta(days=i)).isoformat()), 3
+                )
+                for i in range(13, -1, -1)
+            },
+        }
+        if self._coordinator.dry_run:
+            attrs["note"] = "Dry run: no solar energy is counted while the thermostat is not controlled"
         return attrs

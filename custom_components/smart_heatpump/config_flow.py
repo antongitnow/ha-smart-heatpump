@@ -17,6 +17,7 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_ACTIVE_MONTHS,
     CONF_FORECAST_SOLAR,
+    CONF_HEATPUMP_POWER,
     CONF_NOTIFY_TARGETS,
     CONF_P1_POWER,
     CONF_TEMP_SENSOR,
@@ -96,7 +97,13 @@ class SmartHeatpumpOptionsFlow(OptionsFlow):
 
         if user_input is not None:
             # Validate entities that were provided
-            for key in (CONF_THERMOSTAT, CONF_TEMP_SENSOR, CONF_P1_POWER, CONF_WEATHER):
+            for key in (
+                CONF_THERMOSTAT,
+                CONF_TEMP_SENSOR,
+                CONF_HEATPUMP_POWER,
+                CONF_P1_POWER,
+                CONF_WEATHER,
+            ):
                 entity_id = user_input.get(key)
                 if entity_id and self.hass.states.get(entity_id) is None:
                     errors[key] = "entity_not_found"
@@ -125,6 +132,17 @@ class SmartHeatpumpOptionsFlow(OptionsFlow):
                     selector.EntitySelectorConfig(
                         domain="sensor",
                         device_class="temperature",
+                    )
+                ),
+                vol.Optional(
+                    CONF_HEATPUMP_POWER,
+                    description={
+                        "suggested_value": current.get(CONF_HEATPUMP_POWER, "")
+                    },
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="power",
                     )
                 ),
                 vol.Required(

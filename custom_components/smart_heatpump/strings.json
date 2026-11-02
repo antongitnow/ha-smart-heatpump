@@ -32,7 +32,8 @@
           "weather_entity": "Weather entity",
           "forecast_solar_entity": "Forecast.Solar — predicted production next hour",
           "notify_targets": "Notification targets",
-          "active_months": "Active months"
+          "active_months": "Active months",
+          "heatpump_power_entity": "Heat pump power sensor (W)"
         },
         "data_description": {
           "thermostat_entity": "The climate entity that controls your heat pump. Leave empty for dry run mode.",
@@ -41,7 +42,8 @@
           "weather_entity": "Weather entity providing outdoor temperature and forecast.",
           "forecast_solar_entity": "Paste the entity ID of your Forecast.Solar 'next hour' sensor (e.g. sensor.energy_next_hour). Leave empty if not installed.",
           "notify_targets": "Comma-separated notify service names without the 'notify.' prefix. Example: mobile_app_my_phone, telegram",
-          "active_months": "Select the months when the controller should be active."
+          "active_months": "Select the months when the controller should be active.",
+          "heatpump_power_entity": "Optional. Electrical power of the heat pump (W or kW). Enables the solar energy sensors: kWh the heat pump used on solar surplus during a boost."
         }
       }
     },
@@ -64,7 +66,9 @@
     },
     "sensor": {
       "active_rule": { "name": "Active rule" },
-      "thermal_learning": { "name": "Thermal learning" }
+      "thermal_learning": { "name": "Thermal learning" },
+      "solar_energy_total": { "name": "Heat pump solar energy" },
+      "solar_energy_today": { "name": "Heat pump solar energy today" }
     },
     "switch": {
       "notifications_enabled": { "name": "Notifications" },

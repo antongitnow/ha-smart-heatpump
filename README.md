@@ -200,6 +200,34 @@ Forecast.Solar predicts solar production based on your panel configuration. When
 
 ---
 
+## Solar-powered heat pump energy (optional)
+
+Shows how many kWh your heat pump ran on solar surplus. Select your heat pump's **power sensor** (W or kW) under **Configure → Heat pump power sensor**.
+
+Every reading of the heat pump and P1 sensors is integrated over time. An interval counts as solar when **a solar boost is active** (and the controller is not in dry run) **and the house is not importing from the grid** (net power ≤ 50 W — exporting, or balanced at zero). The heat pump's whole draw during that time is counted; if the grid is being imported or no boost is active, nothing counts.
+
+Two sensors are created:
+
+| Sensor | Description |
+|---|---|
+| `Heat pump solar energy` | Lifetime kWh (`total_increasing`). Use it in the Energy dashboard or a `statistics-graph` card for daily / weekly / monthly bars. |
+| `Heat pump solar energy today` | kWh today. Attributes: total heat pump kWh today, `solar_share_today_pct`, yesterday, last 7 days, this month, and the last 14 days as a per-day map. |
+
+Example card:
+
+```yaml
+type: statistics-graph
+title: Heat pump on solar (kWh per day)
+chart_type: bar
+period: day
+days_to_show: 30
+stat_types: [change]
+entities:
+  - sensor.smart_heatpump_controller_heat_pump_solar_energy
+```
+
+---
+
 ## Active rules
 
 The **Active rule** sensor shows the controller's current decision:
