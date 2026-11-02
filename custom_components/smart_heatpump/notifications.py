@@ -19,6 +19,7 @@ def format_notification(
     dry_run: bool,
     config: dict[str, float],
     forecast_avg_24h: float | None = None,
+    version: str | None = None,
 ) -> tuple[str, str]:
     """Build notification title and message for a setpoint change.
 
@@ -53,7 +54,7 @@ def format_notification(
     safe_rule = rule.replace("_", " ")
     description = description.replace("_", " ")
 
-    title = "Smart Heatpump"
+    title = f"Smart Heatpump v{version}" if version else "Smart Heatpump"
     dry_run_tag = " (DRY RUN)" if dry_run else ""
     message = (
         f"{description}\n"

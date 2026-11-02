@@ -211,3 +211,13 @@ class TestMessageContent:
         assert "300W export" in message
         assert "700W import" in message
         assert "0.5C" in message
+
+
+def test_title_includes_version() -> None:
+    title, _ = _format(version="4.16.1")
+    assert title == "Smart Heatpump v4.16.1"
+
+
+def test_title_without_version() -> None:
+    title, _ = _format()
+    assert title == "Smart Heatpump"

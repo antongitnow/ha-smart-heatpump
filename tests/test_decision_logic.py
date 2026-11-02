@@ -584,10 +584,10 @@ class TestMinimumBoostDuration:
         assert boost is False
 
     def test_min_run_tracks_room_temp(self) -> None:
-        """During min run, setpoint stays ahead of rising room temp."""
+        """During min run with no import, setpoint stays ahead of rising room temp."""
         target, rule, boost = _decide(
             solar_boost_active=True,
-            avg_import_5min_w=500.0,
+            avg_import_5min_w=0.0,
             current_temperature=22.0,  # Room warmed up
             current_setpoint=22.0,     # Setpoint caught up
             boost_active_seconds=300,
@@ -596,6 +596,32 @@ class TestMinimumBoostDuration:
         assert rule == "solar_min_run"
         assert boost is True
         assert target >= 22.5  # Must stay ahead of room temp
+
+    def test_min_run_does_not_raise_while_importing(self) -> None:
+        """Any grid import blocks raising the setpoint, even during min run."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=146.0,
+            current_temperature=22.8,
+            current_setpoint=22.5,
+            boost_active_seconds=300,
+            min_boost_minutes=20,
+        )
+        assert rule == "solar_min_run"
+        assert boost is True
+        assert target <= 22.5
+
+    def test_no_step_up_with_any_import(self) -> None:
+        """Import below release-low never steps the setpoint up."""
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_export_5min_w=400.0,
+            avg_import_5min_w=146.0,
+            current_temperature=22.8,
+            current_setpoint=23.0,
+        )
+        assert rule == "solar_boost_holding"
+        assert target == pytest.approx(23.0)
 
     def test_min_run_zero_disables_protection(self) -> None:
         """min_boost_minutes=0 means no protection."""

@@ -105,6 +105,9 @@ def decide_solar(
         if current_temperature is not None:
             target = max(target, current_temperature + solar_step_delta)
             target = min(target, current_temperature + 1.0)
+        # Never raise the setpoint while importing from the grid.
+        if avg_import_5min_w > 0 and current_setpoint is not None:
+            target = min(target, current_setpoint)
         target = _snap_half(min(max(target, temp_ideal), max_boost_temp))
         return target, "solar_min_run", True
 
@@ -129,7 +132,7 @@ def decide_solar(
     # Import is below the release threshold, but only keep stepping up while
     # there is real surplus. In the dead band (small import / small export)
     # hold the setpoint — raising it there would just pull more from the grid.
-    if avg_export_5min_w <= solar_surplus_threshold:
+    if avg_import_5min_w > 0 or avg_export_5min_w <= solar_surplus_threshold:
         return (
             current_setpoint if current_setpoint is not None else temp_ideal,
             "solar_boost_holding",

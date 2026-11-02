@@ -7,8 +7,10 @@ Thermal model ML learning continues independently.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
@@ -42,6 +44,12 @@ from .thermal_model import predict_hours_until_below
 from .thermal_store import ThermalStore
 
 _LOGGER = logging.getLogger(__name__)
+
+try:
+    with open(Path(__file__).with_name("manifest.json"), encoding="utf-8") as _f:
+        _VERSION: str | None = json.load(_f).get("version")
+except (OSError, ValueError):
+    _VERSION = None
 
 # How many minutes of P1 history to query for the rolling average
 _AVG_WINDOW_MINUTES = 5
@@ -805,6 +813,7 @@ class SmartHeatpumpCoordinator:
             dry_run=self.dry_run,
             config=cfg,
             forecast_avg_24h=self._last_avg_forecast_temp,
+            version=_VERSION,
         )
 
         _LOGGER.warning("Sending notification to targets: %s | message_len=%d", targets, len(message))
