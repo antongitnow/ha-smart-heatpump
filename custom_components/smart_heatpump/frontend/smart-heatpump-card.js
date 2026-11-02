@@ -249,6 +249,8 @@ const STYLE = `
   .tile { background: var(--secondary-background-color); border-radius: 8px; padding: 8px 10px; }
   .tile .l, .kpi .l { font-size: 12px; color: var(--secondary-text-color); }
   .tile .v { font-size: 18px; color: var(--primary-text-color); margin-top: 2px; }
+  .tile.warn { box-shadow: inset 0 0 0 1px var(--warning-color, #ffa600); }
+  .tile .w { font-size: 12px; color: var(--warning-color, #ffa600); margin-top: 2px; }
   .bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
   .nav { display: flex; align-items: center; gap: 4px; }
   .nav .d { min-width: 110px; text-align: center; font-size: 14px; color: var(--primary-text-color); }
@@ -338,6 +340,7 @@ class SmartHeatpumpCard extends HTMLElement {
     const sig = JSON.stringify(this._saved());
     if (sig !== this._lastSaved) {
       this._lastSaved = sig;
+      this._renderLive(); // the setpoint warning depends on the ideal temperature
       if (!this._drag) this._renderChart();
     }
   }
@@ -594,14 +597,23 @@ class SmartHeatpumpCard extends HTMLElement {
     chip.textContent = `${a.description || st.state}${a.mode === "dry_run" ? " · dry run" : ""}`;
     chip.className = `chip${a.solar_boost_active ? " on" : ""}`;
     const deg = (v) => (v === undefined || v === null ? "—" : `${Number(v).toFixed(1)} °C`);
+    // Outside a boost this is the thermostat's own setpoint — flag it when
+    // something else (schedule, app, automation) set it below ideal
+    const ideal = this._saved().ideal;
+    const sp = a.computed_setpoint;
+    const low = sp !== undefined && sp !== null && Number(sp) < ideal;
     const tiles = [
       ["Grid now", a.current_power ? a.current_power.replace(/(\d)W$/, "$1 W") : "—"],
       ["Room", deg(a.indoor_temp)],
-      ["Setpoint", deg(a.computed_setpoint)],
+      ["Thermostat setpoint", deg(sp), low ? `below ideal ${deg(ideal)}` : ""],
       ["Outdoor", deg(a.outdoor_temp)],
     ];
     root.getElementById("live").innerHTML = tiles
-      .map(([l, v]) => `<div class="tile"><div class="l">${l}</div><div class="v">${esc(v)}</div></div>`)
+      .map(
+        ([l, v, warn]) =>
+          `<div class="tile${warn ? " warn" : ""}"><div class="l">${l}</div><div class="v">${esc(v)}</div>` +
+          `${warn ? `<div class="w">${esc(warn)}</div>` : ""}</div>`
+      )
       .join("");
     this._renderDay();
   }
