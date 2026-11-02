@@ -246,7 +246,7 @@ entities:
 
 ## Solar boost tuner card
 
-At the top, **Today so far** shows the measured figures from the sensors above: heat from solar (or, without a heat output sensor, heat pump kWh on solar) with the € saved, heat pump grid import while boosting, boost time, export not used, and boosts / resets, each with yesterday's value.
+At the top, **Today so far** shows the measured figures from the sensors above: heat pump kWh on solar with the € saved, heat from solar with the COP (when a heat output sensor is set), heat pump grid import while boosting, boost time, export not used, and boosts / resets, each with yesterday's value.
 
 Below it, a day of grid power with your three solar thresholds drawn on it. Drag a line to try a different value; the card replays that day's decisions with the same logic the controller uses, so you see the effect before you change anything.
 
