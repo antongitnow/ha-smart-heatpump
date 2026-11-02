@@ -62,13 +62,23 @@
       "solar_step_delta": { "name": "Solar step delta" },
       "solar_min_boost_minutes": { "name": "Minimum boost duration" },
       "virtual_thermostat": { "name": "Virtual thermostat" },
-      "forecast_temp_skip_threshold": { "name": "Forecast skip threshold" }
+      "forecast_temp_skip_threshold": { "name": "Forecast skip threshold" },
+      "solar_max_boost_temp": { "name": "Maximum boost temperature" },
+      "price_import": { "name": "Electricity price" },
+      "price_export": { "name": "Feed-in compensation" }
     },
     "sensor": {
       "active_rule": { "name": "Active rule" },
       "thermal_learning": { "name": "Thermal learning" },
       "solar_energy_total": { "name": "Heat pump solar energy" },
-      "solar_energy_today": { "name": "Heat pump solar energy today" }
+      "solar_energy_today": { "name": "Heat pump solar energy today" },
+      "savings_today": { "name": "Savings today" },
+      "savings_total": { "name": "Savings total" },
+      "boost_time_today": { "name": "Boost time today" },
+      "boosts_today": { "name": "Boosts today" },
+      "resets_today": { "name": "Boost resets today" },
+      "heatpump_grid_boost_today": { "name": "Heat pump grid import while boosting today" },
+      "export_unused_today": { "name": "Export not used today" }
     },
     "switch": {
       "notifications_enabled": { "name": "Notifications" },

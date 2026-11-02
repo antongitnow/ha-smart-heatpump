@@ -230,8 +230,7 @@ class SmartHeatpumpCoordinator:
         for unsub in self._energy_unsubs:
             unsub()
         self._energy_unsubs.clear()
-        if self.heatpump_power_entity:
-            self._energy_store.async_delay_save(self.solar_energy.to_dict, 0)
+        self._energy_store.async_delay_save(self.solar_energy.to_dict, 0)
 
     async def _async_evaluate_callback(self, _now: Any = None) -> None:
         """Timer callback — wraps evaluate with error recovery."""
@@ -384,6 +383,12 @@ class SmartHeatpumpCoordinator:
         if new_boost_active != prev_boost_active:
             # Close the interval under the old flag, start the next under the new one
             self._record_energy()
+        if not self.dry_run:
+            today = now_local.date().isoformat()
+            if new_boost_active and not prev_boost_active:
+                self.solar_energy.count(today, "boosts")
+            if rule == "solar_reset":
+                self.solar_energy.count(today, "resets")
 
         # Track when boost was activated
         if new_boost_active and not prev_boost_active:
@@ -472,15 +477,18 @@ class SmartHeatpumpCoordinator:
 
     @callback
     def _start_energy_tracking(self) -> None:
-        """Integrate on every heat pump / P1 reading, plus a 1-minute heartbeat."""
-        hp_entity = self.heatpump_power_entity
-        if not hp_entity:
+        """Integrate on every heat pump / P1 reading, plus a 1-minute heartbeat.
+
+        Runs without a heat pump meter too: boost time, boost counts and
+        unused export only need the P1 sensor.
+        """
+        p1_entity = self._opt(CONF_P1_POWER)
+        if not p1_entity:
             return
 
-        entities = [hp_entity]
-        p1_entity = self._opt(CONF_P1_POWER)
-        if p1_entity:
-            entities.append(p1_entity)
+        entities = [p1_entity]
+        if self.heatpump_power_entity:
+            entities.append(self.heatpump_power_entity)
 
         @callback
         def _on_state_change(_event: Any) -> None:
@@ -504,17 +512,22 @@ class SmartHeatpumpCoordinator:
         """Feed the current readings to the solar energy tracker.
 
         Counts as "boost" only when the controller is really steering the
-        thermostat — in dry run the heat pump is not being boosted.
+        thermostat — in dry run the heat pump is not being boosted.  Without
+        a heat pump meter its draw counts as 0 W (no solar, no savings).
         """
-        if not self.heatpump_power_entity:
-            return
         boost = self._solar_boost_active and not self.dry_run
+        cfg = self.config_values
         added = self.solar_energy.update(
             ts=dt_util.utcnow().timestamp(),
             day=dt_util.now().date().isoformat(),
-            heatpump_w=self._read_power_w(self.heatpump_power_entity),
+            heatpump_w=(
+                self._read_power_w(self.heatpump_power_entity)
+                if self.heatpump_power_entity
+                else 0.0
+            ),
             net_w=self._read_power_w(self._opt(CONF_P1_POWER)),
             boost_active=boost,
+            value_eur_per_kwh=cfg.get("price_import", 0.0) - cfg.get("price_export", 0.0),
         )
         if added:
             self._energy_store.async_delay_save(

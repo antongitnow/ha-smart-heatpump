@@ -155,6 +155,8 @@ All parameters appear as slider entities under the **Smart Heatpump Controller**
 | Solar release threshold high | 700 | 0–5000 | W | 5-min avg import above which boost resets immediately |
 | Solar release import threshold low | 300 | 0–5000 | W | 5-min avg import above which boost steps down |
 | Solar step delta | 0.5 | 0.1–3.0 | °C | How much to boost/step-down per cycle |
+| Electricity price | 0.30 | 0–1 | €/kWh | What you pay per kWh from the grid (used for savings) |
+| Feed-in compensation | 0.00 | 0–1 | €/kWh | What an exported kWh earns you (used for savings) |
 
 ---
 
@@ -204,37 +206,45 @@ Forecast.Solar predicts solar production based on your panel configuration. When
 
 ---
 
-## Solar-powered heat pump energy (optional)
+## Daily figures and savings
 
-Shows how many kWh your heat pump ran on solar surplus. Select your heat pump's **power sensor** (W or kW) under **Configure → Heat pump power sensor**.
+The controller measures what its boosts actually did, per day. Boost figures need only the P1 sensor; energy and savings also need your heat pump's **power sensor** (W or kW), selected under **Configure → Heat pump power sensor**.
 
-Every reading of the heat pump and P1 sensors is integrated over time. An interval counts as solar when **a solar boost is active** (and the controller is not in dry run) **and the house is not importing from the grid** (net power ≤ 50 W — exporting, or balanced at zero). The heat pump's whole draw during that time is counted; if the grid is being imported or no boost is active, nothing counts.
+Every reading of the heat pump and P1 sensors is integrated over time. While a solar boost is active (and the controller is not in dry run), the heat pump's draw is split in two: other loads in the house get the solar first, so the heat pump's **grid share** is the smaller of its draw and the grid import, and the rest is **solar**. Outside a boost nothing counts as solar.
 
-Two sensors are created:
+**Savings** are the solar kWh valued at *Electricity price − Feed-in compensation*, at the prices set when the energy was used. Set the feed-in compensation to what an exported kWh really earns you: with full net metering (salderen) an exported kWh is worth as much as an imported one, so moving it to the heat pump saves little; once net metering ends, it saves almost the whole electricity price.
 
-| Sensor | Description |
-|---|---|
-| `Heat pump solar energy` | Lifetime kWh (`total_increasing`). Use it in the Energy dashboard or a `statistics-graph` card for daily / weekly / monthly bars. |
-| `Heat pump solar energy today` | kWh today. Attributes: total heat pump kWh today, `solar_share_today_pct`, yesterday, last 7 days, this month, and the last 14 days as a per-day map. |
+| Sensor | Needs heat pump meter | Description |
+|---|---|---|
+| `Savings today` | yes | € saved today. Attributes: yesterday, last 7 days, this month, solar kWh today, prices used. |
+| `Savings total` | yes | Lifetime € saved. |
+| `Heat pump solar energy` | yes | Lifetime kWh the heat pump ran on solar during boosts (`total_increasing`). |
+| `Heat pump solar energy today` | yes | kWh today. Attributes: total heat pump kWh today, `solar_share_today_pct`, yesterday, last 7 days, this month, and the last 14 days as a per-day map. |
+| `Heat pump grid import while boosting today` | yes | kWh the heat pump drew from the grid during boosts — the import between a change in sunshine and the controller's reaction. |
+| `Boost time today` | no | Minutes a boost was active. |
+| `Export not used today` | no | kWh exported while no boost was active. |
+| `Boosts today` / `Boost resets today` | no | Boosts started, and boosts reset on high import. |
 
-Example card:
+The daily sensors have a midnight `last_reset` and `yesterday` / `last_7_days` / `this_month` attributes. Home Assistant keeps their long-term statistics, so a `statistics-graph` card shows them per day, week or month:
 
 ```yaml
 type: statistics-graph
-title: Heat pump on solar (kWh per day)
+title: Solar boost savings per day
 chart_type: bar
 period: day
 days_to_show: 30
 stat_types: [change]
 entities:
-  - sensor.smart_heatpump_controller_heat_pump_solar_energy
+  - sensor.smart_heatpump_controller_savings_today
 ```
 
 ---
 
 ## Solar boost tuner card
 
-A day of grid power with your three solar thresholds drawn on it. Drag a line to try a different value; the card replays that day's decisions with the same logic the controller uses, so you see the effect before you change anything.
+At the top, **Today so far** shows the measured figures from the sensors above: heat pump kWh on solar with the € saved, heat pump grid import while boosting, boost time, export not used, and boosts / resets, each with yesterday's value.
+
+Below it, a day of grid power with your three solar thresholds drawn on it. Drag a line to try a different value; the card replays that day's decisions with the same logic the controller uses, so you see the effect before you change anything.
 
 - **Bars** — grid import (up) and export (down), as 5-minute averages, in the Energy dashboard colours.
 - **Dashed lines** — *Surplus* (export needed to start a boost), *Release low* (import that steps the setpoint down) and *Release high* (import that resets the boost). Drag a line or its label; with keyboard focus on a label, arrow keys move it by 50 W.

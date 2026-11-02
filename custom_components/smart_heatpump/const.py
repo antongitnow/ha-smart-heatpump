@@ -34,6 +34,9 @@ DEFAULTS: dict[str, float] = {
     "solar_min_boost_minutes": 20.0,
     "solar_max_boost_temp": 25.0,
     "forecast_temp_skip_threshold": 15.0,
+    # Savings: a solar kWh used by the heat pump is worth import − export price
+    "price_import": 0.30,
+    "price_export": 0.0,
 }
 
 # Default active months — Sep through Apr (heating season)
@@ -70,6 +73,8 @@ NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]] = [
     ("solar_min_boost_minutes", "Minimum boost duration", 0, 60, 5, "min", "mdi:timer-outline"),
     ("solar_max_boost_temp", "Maximum boost temperature", 10, 30, 0.5, "°C", "mdi:thermometer-high"),
     ("forecast_temp_skip_threshold", "Forecast skip threshold", 5, 30, 0.5, "°C", "mdi:thermometer-alert"),
+    ("price_import", "Electricity price", 0, 1, 0.01, "€/kWh", "mdi:currency-eur"),
+    ("price_export", "Feed-in compensation", 0, 1, 0.01, "€/kWh", "mdi:transmission-tower-export"),
 ]
 
 # ---------------------------------------------------------------------------

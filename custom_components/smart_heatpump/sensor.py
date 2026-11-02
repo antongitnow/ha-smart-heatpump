@@ -9,7 +9,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfEnergy
+from homeassistant.const import UnitOfEnergy, UnitOfTime
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -37,10 +37,18 @@ async def async_setup_entry(
         SmartHeatpumpRuleSensor(coordinator),
         ThermalLearningSensor(coordinator),
     ]
+    # Boost statistics need only the P1 sensor; energy and savings need the heat pump meter
+    entities += [
+        DailyStatSensor(coordinator, *spec) for spec in DAILY_STATS if not spec[-1]
+    ]
     if coordinator.heatpump_power_entity:
         entities += [
             SolarEnergyTotalSensor(coordinator),
             SolarEnergyTodaySensor(coordinator),
+            SavingsTotalSensor(coordinator),
+        ]
+        entities += [
+            DailyStatSensor(coordinator, *spec) for spec in DAILY_STATS if spec[-1]
         ]
     async_add_entities(entities)
 
@@ -250,3 +258,98 @@ class SolarEnergyTodaySensor(_BaseSensor):
         if self._coordinator.dry_run:
             attrs["note"] = "Dry run: no solar energy is counted while the thermostat is not controlled"
         return attrs
+
+
+# (translation_key, tracker field, scale to native unit, device class, unit,
+#  icon, display precision, needs heat pump meter)
+DAILY_STATS: list[tuple] = [
+    ("savings_today", "savings", 1.0, SensorDeviceClass.MONETARY, "EUR",
+     "mdi:piggy-bank-outline", 2, True),
+    ("heatpump_grid_boost_today", "grid_boost", 0.001, SensorDeviceClass.ENERGY,
+     UnitOfEnergy.KILO_WATT_HOUR, "mdi:transmission-tower-import", 2, True),
+    ("boost_time_today", "boost_s", 1 / 60, SensorDeviceClass.DURATION,
+     UnitOfTime.MINUTES, "mdi:timer-sand", 0, False),
+    ("export_unused_today", "export_unused", 0.001, SensorDeviceClass.ENERGY,
+     UnitOfEnergy.KILO_WATT_HOUR, "mdi:transmission-tower-export", 2, False),
+    ("boosts_today", "boosts", 1.0, None, None, "mdi:rocket-launch-outline", 0, False),
+    ("resets_today", "resets", 1.0, None, None, "mdi:restart-alert", 0, False),
+]
+
+
+class DailyStatSensor(_BaseSensor):
+    """A per-day solar boost figure that resets at midnight.
+
+    State class "total" with a daily last_reset, so long-term statistics
+    give per-day, per-week and per-month values for history graphs.
+    """
+
+    _attr_state_class = SensorStateClass.TOTAL
+
+    def __init__(
+        self, coordinator, key, field, scale, device_class, unit, icon, precision, _needs_hp
+    ) -> None:
+        super().__init__(coordinator)
+        self._field = field
+        self._scale = scale
+        self._precision = precision
+        self._attr_translation_key = key
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_{key}"
+        self._attr_device_class = device_class
+        self._attr_native_unit_of_measurement = unit
+        self._attr_icon = icon
+        self._attr_suggested_display_precision = precision
+
+    def _day(self, day) -> float:
+        return round(
+            self._coordinator.solar_energy.value(day.isoformat(), self._field) * self._scale,
+            max(self._precision, 2),
+        )
+
+    @property
+    def last_reset(self) -> datetime:
+        return dt_util.start_of_local_day()
+
+    @property
+    def native_value(self) -> float:
+        return self._day(dt_util.now().date())
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        tracker = self._coordinator.solar_energy
+        today = dt_util.now().date()
+        since = lambda first: round(  # noqa: E731
+            tracker.sum_since(self._field, first, today) * self._scale,
+            max(self._precision, 2),
+        )
+        attrs: dict[str, object] = {
+            "yesterday": self._day(today - timedelta(days=1)),
+            "last_7_days": since(today - timedelta(days=6)),
+            "this_month": since(today.replace(day=1)),
+        }
+        if self._field == "savings":
+            cfg = self._coordinator.config_values
+            attrs["solar_kwh_today"] = round(tracker.solar_kwh(today.isoformat()), 3)
+            attrs["price_import_eur_kwh"] = cfg.get("price_import")
+            attrs["price_export_eur_kwh"] = cfg.get("price_export")
+        if self._coordinator.dry_run:
+            attrs["note"] = "Dry run: boosts are not counted while the thermostat is not controlled"
+        return attrs
+
+
+class SavingsTotalSensor(_BaseSensor):
+    """Lifetime money saved by running the heat pump on solar during boosts."""
+
+    _attr_translation_key = "savings_total"
+    _attr_icon = "mdi:piggy-bank"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_native_unit_of_measurement = "EUR"
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_savings_total"
+
+    @property
+    def native_value(self) -> float:
+        return round(self._coordinator.solar_energy.total_savings_eur, 3)

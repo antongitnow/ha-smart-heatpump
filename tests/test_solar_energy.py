@@ -21,6 +21,7 @@ sys.modules["solar_energy"] = _mod  # dataclasses needs the module registered
 _spec.loader.exec_module(_mod)
 SolarEnergyTracker = _mod.SolarEnergyTracker
 solar_power_w = _mod.solar_power_w
+grid_power_w = _mod.grid_power_w
 
 DAY = "2026-10-23"
 
@@ -28,18 +29,23 @@ DAY = "2026-10-23"
 class TestSolarPower:
     def test_not_boosting_counts_nothing(self):
         assert solar_power_w(1000, -500, boost_active=False) == 0.0
+        assert grid_power_w(1000, 500, boost_active=False) == 0.0
 
     def test_export_counts_whole_draw(self):
         assert solar_power_w(1000, -500, True) == 1000
+        assert grid_power_w(1000, -500, True) == 0.0
 
     def test_balanced_at_zero_counts_whole_draw(self):
         assert solar_power_w(1000, 0, True) == 1000
 
-    def test_import_within_tolerance_counts(self):
-        assert solar_power_w(1000, 40, True) == 1000
+    def test_small_import_is_the_grid_share(self):
+        assert solar_power_w(1000, 300, True) == 700
+        assert grid_power_w(1000, 300, True) == 300
 
-    def test_import_counts_nothing(self):
-        assert solar_power_w(1000, 300, True) == 0.0
+    def test_other_loads_import_is_not_the_heat_pumps(self):
+        # 2.5 kW import with a 400 W heat pump: the rest is another appliance
+        assert grid_power_w(400, 2500, True) == 400
+        assert solar_power_w(400, 2500, True) == 0.0
 
 
 class TestIntegration:
@@ -123,3 +129,49 @@ def test_persistence_roundtrip():
     restored.load_dict(t.to_dict())
     assert restored.total_solar_kwh == pytest.approx(t.total_solar_kwh)
     assert restored.solar_kwh(DAY) == pytest.approx(t.solar_kwh(DAY))
+
+
+class TestBoostStatistics:
+    def test_boost_time_and_unused_export(self):
+        t = SolarEnergyTracker()
+        t.update(0, DAY, 400, -600, False)  # exporting, no boost: unused
+        t.update(300, DAY, 400, -200, True)  # boosting
+        t.update(600, DAY, 400, 100, True)  # boosting, small import
+        t.update(900, DAY, 400, 100, False)
+        assert t.value(DAY, "boost_s") == 600
+        assert t.value(DAY, "export_unused") == pytest.approx(600 * 300 / 3600)
+        assert t.value(DAY, "grid_boost") == pytest.approx(100 * 300 / 3600)
+        assert t.solar_kwh(DAY) == pytest.approx((400 * 300 + 300 * 300) / 3600 / 1000)
+
+    def test_savings_use_price_at_the_time(self):
+        t = SolarEnergyTracker()
+        t.update(0, DAY, 1000, -100, True, value_eur_per_kwh=0.30)
+        t.update(3600 / 10, DAY, 1000, -100, True, value_eur_per_kwh=0.10)  # 0.1 kWh at 0.30
+        t.update(3600 / 5, DAY, 1000, -100, True)  # 0.1 kWh at 0.10
+        assert t.value(DAY, "savings") == pytest.approx(0.04)
+        assert t.total_savings_eur == pytest.approx(0.04)
+
+    def test_without_heat_pump_meter_only_boost_stats_count(self):
+        t = SolarEnergyTracker()
+        t.update(0, DAY, 0.0, -500, True, value_eur_per_kwh=0.30)
+        t.update(300, DAY, 0.0, -500, False)
+        assert t.value(DAY, "boost_s") == 300
+        assert t.solar_kwh(DAY) == 0.0
+        assert t.value(DAY, "savings") == 0.0
+
+    def test_counts(self):
+        t = SolarEnergyTracker()
+        t.count(DAY, "boosts")
+        t.count(DAY, "boosts")
+        t.count(DAY, "resets")
+        assert (t.value(DAY, "boosts"), t.value(DAY, "resets")) == (2, 1)
+
+
+def test_loads_store_from_before_boost_statistics():
+    t = SolarEnergyTracker()
+    t.load_dict({"total_solar_wh": 500.0, "days": {DAY: {"solar": 500.0, "total": 800.0}}})
+    assert t.solar_kwh(DAY) == pytest.approx(0.5)
+    assert t.value(DAY, "boosts") == 0.0
+    assert t.total_savings_eur == 0.0
+    t.count(DAY, "boosts")
+    assert t.value(DAY, "boosts") == 1

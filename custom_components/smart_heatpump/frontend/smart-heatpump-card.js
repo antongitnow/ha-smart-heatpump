@@ -28,6 +28,16 @@ const NUMBER_KEYS = {
   solar_max_boost_temp: "maxBoost",
   evaluation_interval_min: "interval",
 };
+// Measured daily figures (sensor translation_key → card name)
+const STAT_KEYS = {
+  savings_today: "savings",
+  solar_energy_today: "solar",
+  heatpump_grid_boost_today: "grid",
+  boost_time_today: "boostMin",
+  export_unused_today: "unused",
+  boosts_today: "boosts",
+  resets_today: "resets",
+};
 const DEFAULTS = {
   ideal: 21, S: 300, L: 300, H: 700, step: 0.5, minBoost: 20, maxBoost: 25, interval: 5,
 };
@@ -254,6 +264,9 @@ const STYLE = `
   .hit { cursor: ns-resize; }
   .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--secondary-text-color); margin: 4px 0 12px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  .sect { font-size: 14px; color: var(--primary-text-color); margin: 4px 0 8px; }
+  .sect span { font-size: 12px; color: var(--secondary-text-color); margin-left: 6px; }
+  #today { margin-bottom: 16px; }
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
   .kpi { border: 1px solid var(--divider-color); border-radius: 8px; padding: 8px 10px; }
   .kpi .v { font-size: 18px; color: var(--primary-text-color); margin: 2px 0; }
@@ -316,6 +329,11 @@ class SmartHeatpumpCard extends HTMLElement {
       this._lastRule = rule;
       this._renderLive();
     }
+    const todaySig = Object.values(this._entities.stats).map((id) => hass.states[id]?.state).join("|");
+    if (todaySig !== this._lastToday) {
+      this._lastToday = todaySig;
+      this._renderToday();
+    }
     const sig = JSON.stringify(this._saved());
     if (sig !== this._lastSaved) {
       this._lastSaved = sig;
@@ -355,12 +373,16 @@ class SmartHeatpumpCard extends HTMLElement {
     if (!rule) return;
     const device = hass.entities?.[rule]?.device_id;
     const numbers = {};
+    const stats = {};
     for (const e of regs) {
-      if (e.entity_id.startsWith("number.") && NUMBER_KEYS[e.translation_key] && (!device || e.device_id === device)) {
+      if (device && e.device_id !== device) continue;
+      if (e.entity_id.startsWith("number.") && NUMBER_KEYS[e.translation_key]) {
         numbers[NUMBER_KEYS[e.translation_key]] = e.entity_id;
+      } else if (e.entity_id.startsWith("sensor.") && STAT_KEYS[e.translation_key]) {
+        stats[STAT_KEYS[e.translation_key]] = e.entity_id;
       }
     }
-    this._entities = { rule, numbers };
+    this._entities = { rule, numbers, stats };
   }
 
   _saved() {
@@ -469,6 +491,8 @@ class SmartHeatpumpCard extends HTMLElement {
           <span class="chip" id="rule"></span>
         </div>
         <div class="live" id="live"></div>
+        <div class="sect">Today so far <span>measured</span></div>
+        <div class="kpis" id="today"></div>
         <div class="bar">
           <div class="nav">
             <button class="icon" id="prev" aria-label="Previous day">&#8249;</button>
@@ -489,6 +513,7 @@ class SmartHeatpumpCard extends HTMLElement {
           <summary>What do the three lines do?</summary>
           <div class="ex" id="ex"></div>
         </details>
+        <div class="sect" id="replay-head">Replay</div>
         <div class="kpis" id="kpis"></div>
         <div class="actions">
           <span class="note" id="note"></span>
@@ -527,6 +552,7 @@ class SmartHeatpumpCard extends HTMLElement {
     this._ro?.observe(chart);
     this._width = chart.clientWidth;
     this._renderLive();
+    this._renderToday();
   }
 
   _message(text) {
@@ -577,6 +603,43 @@ class SmartHeatpumpCard extends HTMLElement {
       .map(([l, v]) => `<div class="tile"><div class="l">${l}</div><div class="v">${esc(v)}</div></div>`)
       .join("");
     this._renderDay();
+  }
+
+  _renderToday() {
+    const el = this.shadowRoot.getElementById("today");
+    if (!el || !this._entities) return;
+    const ids = this._entities.stats;
+    const st = (k) => this._hass.states[ids[k]];
+    const num = (k) => {
+      const v = parseFloat(st(k)?.state);
+      return Number.isNaN(v) ? null : v;
+    };
+    const kwh = (k) => (num(k) === null ? "—" : `${num(k).toFixed(2)} kWh`);
+    const yday = (k, fmt) => {
+      const v = st(k)?.attributes?.yesterday;
+      return v === undefined ? "" : `yesterday ${fmt(Number(v))}`;
+    };
+    const fmtKwh = (v) => `${v.toFixed(2)} kWh`;
+    const fmtMin = (m) => `${Math.floor(m / 60)}:${String(Math.round(m % 60)).padStart(2, "0")} h`;
+    const noHp = "needs the heat pump power sensor";
+    const tiles = [
+      [
+        "Heat pump on solar",
+        kwh("solar"),
+        num("savings") === null ? noHp : `€ ${num("savings").toFixed(2)} saved`,
+      ],
+      ["Heat pump grid import while boosting", kwh("grid"), num("grid") === null ? noHp : yday("grid", fmtKwh)],
+      ["Boost time", num("boostMin") === null ? "—" : fmtMin(num("boostMin")), yday("boostMin", fmtMin)],
+      ["Export not used", kwh("unused"), yday("unused", fmtKwh)],
+      [
+        "Boosts / resets",
+        num("boosts") === null ? "—" : `${num("boosts")} / ${num("resets") ?? 0}`,
+        st("boosts") ? `yesterday ${st("boosts").attributes.yesterday ?? 0} / ${st("resets")?.attributes.yesterday ?? 0}` : "",
+      ],
+    ];
+    el.innerHTML = tiles
+      .map(([l, v, d]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${esc(v)}</div><div class="d">${esc(d)}</div></div>`)
+      .join("");
   }
 
   _layout() {
@@ -790,6 +853,8 @@ class SmartHeatpumpCard extends HTMLElement {
     root.getElementById("kpis").innerHTML = kpis
       .map(([l, v, d]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div>${d}</div>`)
       .join("");
+    const dayName = this._day === startOfDay(new Date()) ? "today" : new Date(this._day).toLocaleDateString([], { weekday: "long", day: "numeric", month: "short" });
+    root.getElementById("replay-head").innerHTML = `Replay of ${esc(dayName)} <span>${changed ? "with your new thresholds" : "simulated with your saved thresholds"}</span>`;
     root.getElementById("save").style.display = changed ? "" : "none";
     root.getElementById("reset").style.display = changed ? "" : "none";
     root.getElementById("note").textContent = changed
