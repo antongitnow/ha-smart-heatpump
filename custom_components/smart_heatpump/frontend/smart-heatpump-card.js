@@ -221,6 +221,7 @@ function summarise(ticks, interval, hpKnown) {
 
 const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const fmtW = (w) => `${Math.round(Math.abs(w)).toLocaleString()} W`;
+const fmtHM = (min) => `${Math.floor(Math.round(min) / 60)}:${String(Math.round(min) % 60).padStart(2, "0")} h`;
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -620,7 +621,6 @@ class SmartHeatpumpCard extends HTMLElement {
       return v === undefined ? "" : `yesterday ${fmt(Number(v))}`;
     };
     const fmtKwh = (v) => `${v.toFixed(2)} kWh`;
-    const fmtMin = (m) => `${Math.floor(m / 60)}:${String(Math.round(m % 60)).padStart(2, "0")} h`;
     const noHp = "needs the heat pump power sensor";
     const tiles = [
       [
@@ -629,7 +629,7 @@ class SmartHeatpumpCard extends HTMLElement {
         num("savings") === null ? noHp : `€ ${num("savings").toFixed(2)} saved`,
       ],
       ["Heat pump grid import while boosting", kwh("grid"), num("grid") === null ? noHp : yday("grid", fmtKwh)],
-      ["Boost time", num("boostMin") === null ? "—" : fmtMin(num("boostMin")), yday("boostMin", fmtMin)],
+      ["Boost time", num("boostMin") === null ? "—" : fmtHM(num("boostMin")), yday("boostMin", fmtHM)],
       ["Export not used", kwh("unused"), yday("unused", fmtKwh)],
       [
         "Boosts / resets",
@@ -843,9 +843,9 @@ class SmartHeatpumpCard extends HTMLElement {
       return `<div class="d ${good ? "good" : "bad"}">${d > 0 ? "+" : ""}${d.toFixed(digits)}${unit} vs saved</div>`;
     };
     const kpis = [
-      ["Boost time", `${s.boostH.toFixed(1)} h`, delta(s.boostH, r.boostH, " h", false)],
       ["Export used while boosting", `${s.exportBoost.toFixed(2)} kWh`, delta(s.exportBoost, r.exportBoost, " kWh", false, 2)],
       [s.hpKnown ? "Heat pump grid import while boosting" : "Grid import while boosting (whole house)", `${s.importBoost.toFixed(2)} kWh`, delta(s.importBoost, r.importBoost, " kWh", true, 2)],
+      ["Boost time", fmtHM(s.boostH * 60), delta(s.boostH * 60, r.boostH * 60, " min", false, 0)],
       ["Export not used", `${s.exportUnused.toFixed(2)} kWh`, delta(s.exportUnused, r.exportUnused, " kWh", true, 2)],
       ["Boosts / resets", `${s.starts} / ${s.resets}`, delta(s.starts + s.resets, r.starts + r.resets, "", true, 0)],
     ];
