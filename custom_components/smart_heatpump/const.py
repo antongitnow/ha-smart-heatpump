@@ -4,6 +4,9 @@ from __future__ import annotations
 
 DOMAIN = "smart_heatpump"
 
+# URL the Lovelace card is served from (see __init__.async_setup)
+CARD_URL = "/smart_heatpump/smart-heatpump-card.js"
+
 # Config entry keys (set during config flow)
 CONF_THERMOSTAT = "thermostat_entity"
 CONF_P1_POWER = "p1_net_power_entity"

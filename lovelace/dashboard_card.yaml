@@ -1,96 +1,44 @@
-# Smart Heatpump Controller — Lovelace Dashboard Card
+# Smart Heatpump Controller — Lovelace dashboard cards
 #
-# HOW TO ADD THIS CARD TO YOUR DASHBOARD
+# HOW TO ADD
 # 1. Open Home Assistant → your dashboard → Edit (pencil icon)
 # 2. Click "+ Add Card" → "Manual" (scroll to bottom)
-# 3. Paste the YAML below into the card editor
+# 3. Paste ONE of the cards below into the card editor
 # 4. Click Save
 #
-# Entity names use the default naming convention from the integration.
-# If you renamed entities in the UI, update the references below.
+# The solar boost tuner card is served by the integration itself; it finds
+# its entities automatically. The settings card below uses the default
+# entity names — if yours differ (Settings → Devices & services → Smart
+# Heatpump Controller), update the references.
 
-type: entities
-title: Smart Heatpump Controller
-show_header_toggle: false
-entities:
+# --------------------------------------------------------------------------
+# Solar boost tuner — grid power with draggable thresholds and a replay
+# --------------------------------------------------------------------------
 
-  # --------------------------------------------------------------------------
-  # Status
-  # --------------------------------------------------------------------------
+type: custom:smart-heatpump-card
 
-  - type: section
-    label: Status
-
-  - entity: sensor.smart_heatpump_controller_active_rule
-    name: Active rule
-
-  # --------------------------------------------------------------------------
-  # Temperature targets
-  # --------------------------------------------------------------------------
-
-  - type: section
-    label: Temperature targets
-
-  - entity: number.smart_heatpump_controller_ideal_temperature
-    name: Ideal temperature
-
-  - entity: number.smart_heatpump_controller_minimum_temperature
-    name: Minimum temperature
-
-  - entity: number.smart_heatpump_controller_solar_boost_temperature
-    name: Solar boost temperature
-
-  - entity: number.smart_heatpump_controller_pre_heat_delta
-    name: Pre-heat delta
-
-  # --------------------------------------------------------------------------
-  # COP settings
-  # --------------------------------------------------------------------------
-
-  - type: section
-    label: COP settings
-
-  - entity: number.smart_heatpump_controller_cop_threshold_temperature
-    name: COP threshold temperature
-
-  - entity: number.smart_heatpump_controller_cop_recovery_horizon
-    name: COP recovery horizon
-
-  # --------------------------------------------------------------------------
-  # Solar settings
-  # --------------------------------------------------------------------------
-
-  - type: section
-    label: Solar settings
-
-  - entity: number.smart_heatpump_controller_solar_surplus_threshold
-    name: Solar export surplus threshold
-
-  - entity: number.smart_heatpump_controller_solar_confirmation_delay
-    name: Solar confirmation delay
-
-  # --------------------------------------------------------------------------
-  # Notifications
-  # --------------------------------------------------------------------------
-
-  - type: section
-    label: Notifications
-
-  - entity: switch.smart_heatpump_controller_notifications
-    name: Push notifications
-
-  # --------------------------------------------------------------------------
-  # Forecast & timing
-  # --------------------------------------------------------------------------
-
-  - type: section
-    label: Forecast & timing
-
-  - entity: number.smart_heatpump_controller_forecast_horizon
-    name: Forecast horizon
-
-  - entity: number.smart_heatpump_controller_floor_heating_thermal_lag
-    name: Floor heating thermal lag
-
-  - entity: number.smart_heatpump_controller_evaluation_interval
-    name: Evaluation interval
+# --------------------------------------------------------------------------
+# Settings — paste as a separate card if you want the remaining sliders
+# --------------------------------------------------------------------------
+#
+# type: entities
+# title: Smart Heatpump settings
+# show_header_toggle: false
+# entities:
+#   - entity: sensor.smart_heatpump_controller_active_rule
+#     name: Active rule
+#   - type: section
+#     label: Temperature
+#   - entity: number.smart_heatpump_controller_ideal_temperature
+#   - entity: number.smart_heatpump_controller_minimum_temperature
+#   - entity: number.smart_heatpump_controller_maximum_boost_temperature
+#   - entity: number.smart_heatpump_controller_solar_step_delta
+#   - type: section
+#     label: Timing
+#   - entity: number.smart_heatpump_controller_minimum_boost_duration
+#   - entity: number.smart_heatpump_controller_evaluation_interval
+#   - entity: number.smart_heatpump_controller_forecast_skip_threshold
+#   - type: section
+#     label: Mode
+#   - entity: switch.smart_heatpump_controller_dry_run
+#   - entity: switch.smart_heatpump_controller_notifications

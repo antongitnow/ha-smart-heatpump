@@ -128,11 +128,15 @@ The thermal model excludes observations where solar gain is likely (solar export
 
 Leave the thermostat field empty during setup. The controller runs normally — reads sensors, evaluates rules, logs decisions, and sends notifications — but does not touch any thermostat. The **Active rule** sensor shows a `mode: dry_run` attribute and the computed setpoint it *would* have set.
 
-### Step 3 — Add the dashboard card (optional)
+### Step 3 — Add the solar boost tuner card (optional)
 
-1. Open your dashboard → **Edit** (pencil icon) → **+ Add Card** → **Manual**.
-2. Paste the contents of [`lovelace/dashboard_card.yaml`](lovelace/dashboard_card.yaml).
-3. Click **Save**.
+The integration ships its own dashboard card; it loads automatically, no HACS frontend install needed.
+
+1. Open your dashboard → **Edit** (pencil icon) → **+ Add Card**.
+2. Search for **Smart Heatpump solar boost tuner**, or choose **Manual** and paste [`lovelace/dashboard_card.yaml`](lovelace/dashboard_card.yaml).
+3. Click **Save**. If the card isn't found right after updating, reload the browser page.
+
+See [Solar boost tuner card](#solar-boost-tuner-card) for what it shows.
 
 ---
 
@@ -228,6 +232,35 @@ entities:
 
 ---
 
+## Solar boost tuner card
+
+A day of grid power with your three solar thresholds drawn on it. Drag a line to try a different value; the card replays that day's decisions with the same logic the controller uses, so you see the effect before you change anything.
+
+- **Bars** — grid import (up) and export (down), as 5-minute averages, in the Energy dashboard colours.
+- **Dashed lines** — *Surplus* (export needed to start a boost), *Release low* (import that steps the setpoint down) and *Release high* (import that resets the boost). Drag a line or its label; with keyboard focus on a label, arrow keys move it by 50 W.
+- **Shaded columns** — when a boost would have been active.
+- **Bottom strip** — the replayed setpoint and the measured room temperature.
+- **Tiles** — boost time, export used while boosting, grid import while boosting, export left unused, and boost starts / resets, each compared with your saved thresholds. Many starts and resets mean the thresholds are too close together and the boost flaps on and off.
+- **What do the three lines do?** — an expandable explanation of each threshold, filled in with your current values. Hovering a line's label shows a one-line summary.
+- **Save thresholds** writes the new values to the number entities. **Back to saved** discards the edit.
+
+Use the arrows to replay one of the last 10 days (the recorder's default history). Hover a bar to see the rule the controller would have applied at that moment.
+
+The replay uses the recorded P1 and room-temperature history and your saved ideal temperature, step delta, minimum boost duration and maximum boost temperature. It ignores the heating-season months and the forecast-temperature skip, and starts each day with the boost off.
+
+```yaml
+type: custom:smart-heatpump-card
+# All optional:
+title: Solar boost tuner
+start_hour: 6          # visible time window
+end_hour: 20
+# entity: sensor.smart_heatpump_controller_active_rule   # only needed with several controllers
+# power_entity: sensor.p1_meter_power                    # override the configured P1 sensor
+# indoor_temp_entity: sensor.living_room_temperature     # override the room temperature source
+```
+
+---
+
 ## Active rules
 
 The **Active rule** sensor shows the controller's current decision:
@@ -250,6 +283,7 @@ The sensor also exposes these attributes:
 - `current_power` — current import/export reading
 - `avg_import_5min_w` — 5-minute rolling average import
 - `indoor_temp` / `outdoor_temp` — latest readings
+- `power_entity` / `indoor_temp_entity` — the configured source sensors (used by the tuner card)
 
 ---
 
@@ -282,6 +316,7 @@ Pull requests and issues are welcome. Please open an issue first to discuss sign
 When contributing code:
 - Keep `decide_solar()` in `decision.py` as a pure function with no HA dependency.
 - Add a test case in `tests/test_decision_logic.py` for any new decision logic.
+- Mirror any change to `decide_solar()` in `decideSolar()` in `frontend/smart-heatpump-card.js`; `tests/test_card_replay.py` (needs Node.js) checks the two agree.
 - Run `pytest tests/` before submitting.
 
 ---

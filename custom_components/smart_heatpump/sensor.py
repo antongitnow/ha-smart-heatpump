@@ -16,7 +16,13 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, RULE_DESCRIPTIONS
+from .const import (
+    CONF_P1_POWER,
+    CONF_TEMP_SENSOR,
+    CONF_THERMOSTAT,
+    DOMAIN,
+    RULE_DESCRIPTIONS,
+)
 from .thermal_model import MIN_SAMPLES, count_valid_cooling_samples
 
 
@@ -105,6 +111,11 @@ class SmartHeatpumpRuleSensor(_BaseSensor):
             attrs["forecast_avg_24h"] = c._last_avg_forecast_temp
         attrs["notify_targets"] = c.notify_targets
         attrs["notifications_enabled"] = c.notifications_enabled
+        # Source entities, so the Lovelace card can replay their history
+        attrs["power_entity"] = c._opt(CONF_P1_POWER) or None
+        attrs["indoor_temp_entity"] = (
+            c._opt(CONF_TEMP_SENSOR) or c._opt(CONF_THERMOSTAT) or None
+        )
         return attrs
 
 
