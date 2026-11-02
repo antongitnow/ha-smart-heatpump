@@ -8,6 +8,10 @@ a grid part and a solar part: other loads in the house get the solar first,
 so the heat pump's grid share is min(heat pump draw, grid import) and the rest
 is solar.  Outside a boost nothing counts as solar.
 
+With a heat output meter, the heat delivered while boosting is split the
+same way: the heat from solar is the heat output times the solar share of
+the heat pump's draw.
+
 Per day it also keeps boost time, the number of boosts and resets, export
 left unused (exported while no boost was active) and the money saved — the
 solar kWh valued at the import price minus what an exported kWh earns, at the
@@ -28,7 +32,9 @@ MAX_GAP_SECONDS = 600.0
 HISTORY_DAYS = 62
 
 # Per-day fields: Wh, seconds, counts and euros
-_FIELDS = ("solar", "total", "grid_boost", "export_unused", "boost_s", "boosts", "resets", "savings")
+_FIELDS = (
+    "solar", "total", "grid_boost", "export_unused", "boost_s", "boosts", "resets", "savings", "heat_solar",
+)
 
 
 def grid_power_w(heatpump_w: float, net_w: float, boost_active: bool) -> float:
@@ -45,6 +51,13 @@ def solar_power_w(heatpump_w: float, net_w: float, boost_active: bool) -> float:
     return max(0.0, heatpump_w) - grid_power_w(heatpump_w, net_w, boost_active)
 
 
+def solar_heat_w(heat_w: float, heatpump_w: float, net_w: float, boost_active: bool) -> float:
+    """Heat output (W) produced from solar: heat × the solar share of the draw."""
+    if heatpump_w <= 0:
+        return 0.0
+    return max(0.0, heat_w) * solar_power_w(heatpump_w, net_w, boost_active) / heatpump_w
+
+
 @dataclass
 class _Sample:
     ts: float
@@ -52,6 +65,7 @@ class _Sample:
     net_w: float
     boost_active: bool
     value_eur_per_kwh: float
+    heat_w: float
 
 
 class SolarEnergyTracker:
@@ -60,6 +74,7 @@ class SolarEnergyTracker:
     def __init__(self) -> None:
         self.total_solar_wh: float = 0.0
         self.total_savings_eur: float = 0.0
+        self.total_heat_solar_wh: float = 0.0
         # "YYYY-MM-DD" -> {field: value} for every field in _FIELDS
         self.days: dict[str, dict[str, float]] = {}
         self._last: _Sample | None = None
@@ -76,6 +91,7 @@ class SolarEnergyTracker:
         net_w: float | None,
         boost_active: bool,
         value_eur_per_kwh: float = 0.0,
+        heat_w: float | None = None,
     ) -> bool:
         """Integrate the interval since the previous sample, then store this one.
 
@@ -86,6 +102,8 @@ class SolarEnergyTracker:
         sample.  Pass 0 for ``heatpump_w`` when no heat pump meter exists, so
         boost time and unused export are still tracked.  ``value_eur_per_kwh``
         is what a solar kWh used by the heat pump is worth right now.
+        ``heat_w`` is the heat pump's heat output; None (no meter, or
+        unavailable) counts no heat for the interval.
         Returns True when anything was added.
         """
         added = False
@@ -101,6 +119,9 @@ class SolarEnergyTracker:
                 bucket["solar"] += solar_wh
                 bucket["grid_boost"] += grid_power_w(prev.heatpump_w, prev.net_w, prev.boost_active) * hours
                 bucket["savings"] += saved
+                heat_wh = solar_heat_w(prev.heat_w, prev.heatpump_w, prev.net_w, prev.boost_active) * hours
+                bucket["heat_solar"] += heat_wh
+                self.total_heat_solar_wh += heat_wh
                 if prev.boost_active:
                     bucket["boost_s"] += dt
                 else:
@@ -113,7 +134,9 @@ class SolarEnergyTracker:
         if heatpump_w is None or net_w is None:
             self._last = None
         else:
-            self._last = _Sample(ts, heatpump_w, net_w, boost_active, value_eur_per_kwh)
+            self._last = _Sample(
+                ts, heatpump_w, net_w, boost_active, value_eur_per_kwh, heat_w or 0.0
+            )
         return added
 
     def count(self, day: str, field: str) -> None:
@@ -182,12 +205,14 @@ class SolarEnergyTracker:
         return {
             "total_solar_wh": self.total_solar_wh,
             "total_savings_eur": self.total_savings_eur,
+            "total_heat_solar_wh": self.total_heat_solar_wh,
             "days": {k: dict(v) for k, v in self.days.items()},
         }
 
     def load_dict(self, data: dict[str, Any]) -> None:
         self.total_solar_wh = float(data.get("total_solar_wh", 0.0))
         self.total_savings_eur = float(data.get("total_savings_eur", 0.0))
+        self.total_heat_solar_wh = float(data.get("total_heat_solar_wh", 0.0))
         self.days = {
             k: {field: float(v.get(field, 0.0)) for field in _FIELDS}
             for k, v in data.get("days", {}).items()

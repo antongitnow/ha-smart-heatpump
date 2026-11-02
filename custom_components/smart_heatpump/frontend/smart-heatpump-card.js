@@ -32,6 +32,7 @@ const NUMBER_KEYS = {
 const STAT_KEYS = {
   savings_today: "savings",
   solar_energy_today: "solar",
+  heat_solar_today: "heat",
   heatpump_grid_boost_today: "grid",
   boost_time_today: "boostMin",
   export_unused_today: "unused",
@@ -635,11 +636,18 @@ class SmartHeatpumpCard extends HTMLElement {
     const fmtKwh = (v) => `${v.toFixed(2)} kWh`;
     const noHp = "needs the heat pump power sensor";
     const tiles = [
-      [
-        "Heat pump on solar",
-        kwh("solar"),
-        num("savings") === null ? noHp : `€ ${num("savings").toFixed(2)} saved`,
-      ],
+      // With a heat output sensor the headline is the heat; else the electricity
+      num("heat") !== null
+        ? [
+            "Heat from solar",
+            `${num("heat").toFixed(2)} kWh`,
+            `${(num("solar") ?? 0).toFixed(2)} kWh electricity · € ${(num("savings") ?? 0).toFixed(2)} saved`,
+          ]
+        : [
+            "Heat pump on solar",
+            kwh("solar"),
+            num("savings") === null ? noHp : `€ ${num("savings").toFixed(2)} saved`,
+          ],
       ["Heat pump grid import while boosting", kwh("grid"), num("grid") === null ? noHp : yday("grid", fmtKwh)],
       ["Boost time", num("boostMin") === null ? "—" : fmtHM(num("boostMin")), yday("boostMin", fmtHM)],
       ["Export not used", kwh("unused"), yday("unused", fmtKwh)],

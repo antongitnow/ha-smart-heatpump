@@ -37,19 +37,22 @@ async def async_setup_entry(
         SmartHeatpumpRuleSensor(coordinator),
         ThermalLearningSensor(coordinator),
     ]
-    # Boost statistics need only the P1 sensor; energy and savings need the heat pump meter
-    entities += [
-        DailyStatSensor(coordinator, *spec) for spec in DAILY_STATS if not spec[-1]
-    ]
-    if coordinator.heatpump_power_entity:
+    # Boost statistics need only the P1 sensor; energy and savings need the
+    # heat pump meter; heat from solar also needs the heat output sensor
+    has = {
+        None: True,
+        "power": bool(coordinator.heatpump_power_entity),
+        "heat": bool(coordinator.heatpump_power_entity and coordinator.heatpump_heat_entity),
+    }
+    entities += [DailyStatSensor(coordinator, *spec) for spec in DAILY_STATS if has[spec[-1]]]
+    if has["power"]:
         entities += [
             SolarEnergyTotalSensor(coordinator),
             SolarEnergyTodaySensor(coordinator),
             SavingsTotalSensor(coordinator),
         ]
-        entities += [
-            DailyStatSensor(coordinator, *spec) for spec in DAILY_STATS if spec[-1]
-        ]
+    if has["heat"]:
+        entities.append(HeatSolarTotalSensor(coordinator))
     async_add_entities(entities)
 
 
@@ -261,18 +264,20 @@ class SolarEnergyTodaySensor(_BaseSensor):
 
 
 # (translation_key, tracker field, scale to native unit, device class, unit,
-#  icon, display precision, needs heat pump meter)
+#  icon, display precision, extra meter needed: None, "power" or "heat")
 DAILY_STATS: list[tuple] = [
     ("savings_today", "savings", 1.0, SensorDeviceClass.MONETARY, "EUR",
-     "mdi:piggy-bank-outline", 2, True),
+     "mdi:piggy-bank-outline", 2, "power"),
+    ("heat_solar_today", "heat_solar", 0.001, SensorDeviceClass.ENERGY,
+     UnitOfEnergy.KILO_WATT_HOUR, "mdi:heat-wave", 2, "heat"),
     ("heatpump_grid_boost_today", "grid_boost", 0.001, SensorDeviceClass.ENERGY,
-     UnitOfEnergy.KILO_WATT_HOUR, "mdi:transmission-tower-import", 2, True),
+     UnitOfEnergy.KILO_WATT_HOUR, "mdi:transmission-tower-import", 2, "power"),
     ("boost_time_today", "boost_s", 1 / 60, SensorDeviceClass.DURATION,
-     UnitOfTime.MINUTES, "mdi:timer-sand", 0, False),
+     UnitOfTime.MINUTES, "mdi:timer-sand", 0, None),
     ("export_unused_today", "export_unused", 0.001, SensorDeviceClass.ENERGY,
-     UnitOfEnergy.KILO_WATT_HOUR, "mdi:transmission-tower-export", 2, False),
-    ("boosts_today", "boosts", 1.0, None, None, "mdi:rocket-launch-outline", 0, False),
-    ("resets_today", "resets", 1.0, None, None, "mdi:restart-alert", 0, False),
+     UnitOfEnergy.KILO_WATT_HOUR, "mdi:transmission-tower-export", 2, None),
+    ("boosts_today", "boosts", 1.0, None, None, "mdi:rocket-launch-outline", 0, None),
+    ("resets_today", "resets", 1.0, None, None, "mdi:restart-alert", 0, None),
 ]
 
 
@@ -286,7 +291,7 @@ class DailyStatSensor(_BaseSensor):
     _attr_state_class = SensorStateClass.TOTAL
 
     def __init__(
-        self, coordinator, key, field, scale, device_class, unit, icon, precision, _needs_hp
+        self, coordinator, key, field, scale, device_class, unit, icon, precision, _needs
     ) -> None:
         super().__init__(coordinator)
         self._field = field
@@ -353,3 +358,22 @@ class SavingsTotalSensor(_BaseSensor):
     @property
     def native_value(self) -> float:
         return round(self._coordinator.solar_energy.total_savings_eur, 3)
+
+
+class HeatSolarTotalSensor(_BaseSensor):
+    """Lifetime kWh of heat the heat pump produced from solar during boosts."""
+
+    _attr_translation_key = "heat_solar_total"
+    _attr_icon = "mdi:heat-wave"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_heat_solar_total"
+
+    @property
+    def native_value(self) -> float:
+        return round(self._coordinator.solar_energy.total_heat_solar_wh / 1000.0, 3)

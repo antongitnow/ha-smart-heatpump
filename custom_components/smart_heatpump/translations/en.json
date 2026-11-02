@@ -31,13 +31,15 @@
           "forecast_solar_entity": "Forecast.Solar entity (optional)",
           "notify_targets": "Notification targets",
           "active_months": "Active months",
-          "heatpump_power_entity": "Heat pump power sensor (W)"
+          "heatpump_power_entity": "Heat pump power sensor (W)",
+          "heatpump_heat_entity": "Heat pump heat output sensor (W)"
         },
         "data_description": {
           "forecast_solar_entity": "Forecast.Solar sensor for predictive solar boost. Leave empty if not installed.",
           "notify_targets": "Comma-separated notify service names without the 'notify.' prefix. Example: mobile_app_my_phone, telegram",
           "active_months": "Select the months when the controller should be active.",
-          "heatpump_power_entity": "Optional. Electrical power of the heat pump (W or kW). Enables the solar energy sensors: kWh the heat pump used on solar surplus during a boost."
+          "heatpump_power_entity": "Optional. Electrical power of the heat pump (W or kW). Enables the solar energy sensors: kWh the heat pump used on solar surplus during a boost.",
+          "heatpump_heat_entity": "Optional. Heat the heat pump delivers to the house (W or kW), e.g. Quatt's CIC Total power. Enables the heat-on-solar sensors: kWh of heat produced from solar during a boost. Needs the heat pump power sensor."
         }
       }
     }
@@ -69,7 +71,9 @@
       "boosts_today": { "name": "Boosts today" },
       "resets_today": { "name": "Boost resets today" },
       "heatpump_grid_boost_today": { "name": "Heat pump grid import while boosting today" },
-      "export_unused_today": { "name": "Export not used today" }
+      "export_unused_today": { "name": "Export not used today" },
+      "heat_solar_today": { "name": "Heat from solar today" },
+      "heat_solar_total": { "name": "Heat from solar" }
     },
     "switch": {
       "notifications_enabled": { "name": "Notifications" },

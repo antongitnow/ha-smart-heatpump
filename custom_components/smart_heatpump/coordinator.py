@@ -26,6 +26,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONF_ACTIVE_MONTHS,
     CONF_FORECAST_SOLAR,
+    CONF_HEATPUMP_HEAT,
     CONF_HEATPUMP_POWER,
     CONF_NOTIFY_TARGETS,
     CONF_P1_POWER,
@@ -173,6 +174,12 @@ class SmartHeatpumpCoordinator:
     def heatpump_power_entity(self) -> str | None:
         """Get the heat pump power entity from options."""
         entity = self._opt(CONF_HEATPUMP_POWER)
+        return entity if entity else None
+
+    @property
+    def heatpump_heat_entity(self) -> str | None:
+        """Get the heat pump heat output entity from options."""
+        entity = self._opt(CONF_HEATPUMP_HEAT)
         return entity if entity else None
 
     @property
@@ -489,6 +496,8 @@ class SmartHeatpumpCoordinator:
         entities = [p1_entity]
         if self.heatpump_power_entity:
             entities.append(self.heatpump_power_entity)
+        if self.heatpump_heat_entity:
+            entities.append(self.heatpump_heat_entity)
 
         @callback
         def _on_state_change(_event: Any) -> None:
@@ -528,6 +537,7 @@ class SmartHeatpumpCoordinator:
             net_w=self._read_power_w(self._opt(CONF_P1_POWER)),
             boost_active=boost,
             value_eur_per_kwh=cfg.get("price_import", 0.0) - cfg.get("price_export", 0.0),
+            heat_w=self._read_power_w(self.heatpump_heat_entity or ""),
         )
         if added:
             self._energy_store.async_delay_save(

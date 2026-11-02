@@ -212,6 +212,8 @@ The controller measures what its boosts actually did, per day. Boost figures nee
 
 Every reading of the heat pump and P1 sensors is integrated over time. While a solar boost is active (and the controller is not in dry run), the heat pump's draw is split in two: other loads in the house get the solar first, so the heat pump's **grid share** is the smaller of its draw and the grid import, and the rest is **solar**. Outside a boost nothing counts as solar.
 
+With a **heat output sensor** (Configure → Heat pump heat output sensor — for Quatt, `CIC Total power`), the heat delivered while boosting is split the same way: **heat from solar** is the heat output times the solar share of the heat pump's draw. At a COP of 5, 1 kWh of solar electricity becomes about 5 kWh of heat in the floor.
+
 **Savings** are the solar kWh valued at *Electricity price − Feed-in compensation*, at the prices set when the energy was used. Set the feed-in compensation to what an exported kWh really earns you: with full net metering (salderen) an exported kWh is worth as much as an imported one, so moving it to the heat pump saves little; once net metering ends, it saves almost the whole electricity price.
 
 | Sensor | Needs heat pump meter | Description |
@@ -220,6 +222,8 @@ Every reading of the heat pump and P1 sensors is integrated over time. While a s
 | `Savings total` | yes | Lifetime € saved. |
 | `Heat pump solar energy` | yes | Lifetime kWh the heat pump ran on solar during boosts (`total_increasing`). |
 | `Heat pump solar energy today` | yes | kWh today. Attributes: total heat pump kWh today, `solar_share_today_pct`, yesterday, last 7 days, this month, and the last 14 days as a per-day map. |
+| `Heat from solar today` | + heat output sensor | kWh of heat produced from solar during boosts. Attributes: yesterday, last 7 days, this month. |
+| `Heat from solar` | + heat output sensor | Lifetime kWh of heat from solar (`total_increasing`). |
 | `Heat pump grid import while boosting today` | yes | kWh the heat pump drew from the grid during boosts — the import between a change in sunshine and the controller's reaction. |
 | `Boost time today` | no | Minutes a boost was active. |
 | `Export not used today` | no | kWh exported while no boost was active. |
@@ -242,7 +246,7 @@ entities:
 
 ## Solar boost tuner card
 
-At the top, **Today so far** shows the measured figures from the sensors above: heat pump kWh on solar with the € saved, heat pump grid import while boosting, boost time, export not used, and boosts / resets, each with yesterday's value.
+At the top, **Today so far** shows the measured figures from the sensors above: heat from solar (or, without a heat output sensor, heat pump kWh on solar) with the € saved, heat pump grid import while boosting, boost time, export not used, and boosts / resets, each with yesterday's value.
 
 Below it, a day of grid power with your three solar thresholds drawn on it. Drag a line to try a different value; the card replays that day's decisions with the same logic the controller uses, so you see the effect before you change anything.
 

@@ -16,6 +16,7 @@ CONF_TEMP_SENSOR = "temp_sensor_entity"
 # Options entry keys (set via Configure button)
 CONF_FORECAST_SOLAR = "forecast_solar_entity"
 CONF_HEATPUMP_POWER = "heatpump_power_entity"
+CONF_HEATPUMP_HEAT = "heatpump_heat_entity"
 CONF_NOTIFY_TARGETS = "notify_targets"
 CONF_ACTIVE_MONTHS = "active_months"
 

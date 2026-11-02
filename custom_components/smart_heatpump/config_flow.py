@@ -17,6 +17,7 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_ACTIVE_MONTHS,
     CONF_FORECAST_SOLAR,
+    CONF_HEATPUMP_HEAT,
     CONF_HEATPUMP_POWER,
     CONF_NOTIFY_TARGETS,
     CONF_P1_POWER,
@@ -101,6 +102,7 @@ class SmartHeatpumpOptionsFlow(OptionsFlow):
                 CONF_THERMOSTAT,
                 CONF_TEMP_SENSOR,
                 CONF_HEATPUMP_POWER,
+                CONF_HEATPUMP_HEAT,
                 CONF_P1_POWER,
                 CONF_WEATHER,
             ):
@@ -138,6 +140,17 @@ class SmartHeatpumpOptionsFlow(OptionsFlow):
                     CONF_HEATPUMP_POWER,
                     description={
                         "suggested_value": current.get(CONF_HEATPUMP_POWER, "")
+                    },
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="power",
+                    )
+                ),
+                vol.Optional(
+                    CONF_HEATPUMP_HEAT,
+                    description={
+                        "suggested_value": current.get(CONF_HEATPUMP_HEAT, "")
                     },
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(

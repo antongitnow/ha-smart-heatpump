@@ -175,3 +175,23 @@ def test_loads_store_from_before_boost_statistics():
     assert t.total_savings_eur == 0.0
     t.count(DAY, "boosts")
     assert t.value(DAY, "boosts") == 1
+
+
+class TestHeatFromSolar:
+    def test_all_solar_counts_all_heat(self):
+        t = SolarEnergyTracker()
+        t.update(0, DAY, 500, -200, True, heat_w=3000)
+        t.update(3600 / 10, DAY, 500, -200, True, heat_w=3000)
+        assert t.value(DAY, "heat_solar") == pytest.approx(300)  # 3 kW for 6 min
+        assert t.total_heat_solar_wh == pytest.approx(300)
+
+    def test_heat_follows_the_solar_share(self):
+        # 500 W draw with 100 W import: 80 % solar, so 80 % of the heat
+        assert _mod.solar_heat_w(3000, 500, 100, True) == pytest.approx(2400)
+
+    def test_no_heat_outside_boost_or_without_meter(self):
+        t = SolarEnergyTracker()
+        t.update(0, DAY, 500, -200, False, heat_w=3000)
+        t.update(300, DAY, 500, -200, True)  # no heat meter reading
+        t.update(600, DAY, 500, -200, True)
+        assert t.value(DAY, "heat_solar") == 0.0
