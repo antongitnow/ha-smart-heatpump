@@ -664,19 +664,19 @@ class TestMinimumBoostDuration:
         assert boost is True
         assert target == pytest.approx(21.5)  # ideal(21.0) + delta(0.5)
 
-    def test_min_run_caps_at_1_degree_above_room(self) -> None:
-        """During min run, setpoint is capped at room temp + 1.0°C."""
+    def test_min_run_cap_does_not_lower_setpoint(self) -> None:
+        """During min run, the room + 1.0°C cap limits raising only."""
         target, rule, boost = _decide(
             solar_boost_active=True,
             avg_import_5min_w=0.0,
             current_temperature=22.0,
-            current_setpoint=23.5,  # above room + 1.0 → capped to 23.0
+            current_setpoint=23.5,  # above room + 1.0, but never lowered
             boost_active_seconds=300,
             min_boost_minutes=20,
         )
         assert rule == "solar_min_run"
         assert boost is True
-        assert target == pytest.approx(23.0)  # 22.0 + 1.0
+        assert target == pytest.approx(23.5)
 
     def test_min_run_expired_allows_step_down(self) -> None:
         """After min run expires, moderate import triggers normal step-down."""
@@ -765,3 +765,53 @@ class TestMaxBoostTemperature:
         assert rule == "solar_step_down"
         assert boost is True
         assert target == 24.5  # capped at max_boost_temp
+
+
+class TestNoLoweringWhileExporting:
+    """Surplus branches must never lower the setpoint."""
+
+    def test_activation_keeps_higher_existing_setpoint(self) -> None:
+        target, rule, boost = _decide(
+            solar_boost_active=False,
+            avg_export_5min_w=328.0,
+            current_temperature=22.2,
+            current_setpoint=23.0,
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+        assert target == pytest.approx(23.0)
+
+    def test_step_up_cap_never_lowers_setpoint(self) -> None:
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_export_5min_w=500.0,
+            current_temperature=22.2,
+            current_setpoint=23.5,  # room + 1.0 cap would give 23.0
+        )
+        assert rule == "solar_incremental"
+        assert target >= 23.5
+
+
+class TestStepDownBlockedWhileExporting:
+    def test_moderate_import_avg_holds_while_exporting_now(self) -> None:
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,
+            current_export_w=700.0,
+            current_temperature=22.2,
+            current_setpoint=23.0,
+        )
+        assert rule == "solar_boost_holding"
+        assert boost is True
+        assert target == pytest.approx(23.0)
+
+    def test_moderate_import_avg_steps_down_when_not_exporting(self) -> None:
+        target, rule, _ = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,
+            current_export_w=0.0,
+            current_temperature=22.2,
+            current_setpoint=23.0,
+        )
+        assert rule == "solar_step_down"
+        assert target == pytest.approx(22.5)

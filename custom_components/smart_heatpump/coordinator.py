@@ -376,6 +376,7 @@ class SmartHeatpumpCoordinator:
             boost_active_seconds=boost_active_seconds,
             min_boost_minutes=cfg.get("solar_min_boost_minutes", 0.0),
             max_boost_temp=cfg.get("solar_max_boost_temp", 25.0),
+            current_export_w=solar_export or 0.0,
         )
 
         prev_boost_active = self._solar_boost_active

@@ -41,6 +41,7 @@ def decide_solar(
     boost_active_seconds: float = 0.0,
     min_boost_minutes: float = 0.0,
     max_boost_temp: float = 25.0,
+    current_export_w: float = 0.0,
 ) -> tuple[float, str, bool]:
     """Decide the target thermostat setpoint for the solar incremental flow.
 
@@ -60,6 +61,7 @@ def decide_solar(
         boost_active_seconds: How long boost has been active (seconds).
         min_boost_minutes: Minimum boost duration before step-down/reset allowed.
         max_boost_temp: Absolute ceiling for boosted setpoint (°C).
+        current_export_w: Instantaneous export in Watts (>=0); blocks step-down.
 
     Returns:
         (target_setpoint, rule_name, new_solar_boost_active)
@@ -81,6 +83,9 @@ def decide_solar(
                 target = current_temperature + solar_step_delta
             else:
                 target = temp_ideal + solar_step_delta
+            # Activating on surplus must never lower an existing setpoint.
+            if current_setpoint is not None:
+                target = max(target, current_setpoint)
             target = _snap_half(min(max(target, temp_ideal), max_boost_temp))
             return target, "solar_incremental", True
         else:
@@ -105,15 +110,27 @@ def decide_solar(
         if current_temperature is not None:
             target = max(target, current_temperature + solar_step_delta)
             target = min(target, current_temperature + 1.0)
-        # Never raise the setpoint while importing from the grid.
-        if avg_import_5min_w > 0 and current_setpoint is not None:
-            target = min(target, current_setpoint)
+        # Never raise the setpoint while importing from the grid, and the
+        # room + 1.0 cap limits raising only — it never lowers the setpoint.
+        if current_setpoint is not None:
+            if avg_import_5min_w > 0:
+                target = current_setpoint
+            else:
+                target = max(target, current_setpoint)
         target = _snap_half(min(max(target, temp_ideal), max_boost_temp))
         return target, "solar_min_run", True
 
     # Check high import → immediate reset
     if avg_import_5min_w > solar_release_threshold_high:
         return temp_ideal, "solar_reset", False
+
+    # Averaged import may lag: while exporting right now, hold instead of stepping down
+    if current_export_w > 0 and avg_import_5min_w > solar_release_threshold_low:
+        return (
+            current_setpoint if current_setpoint is not None else temp_ideal,
+            "solar_boost_holding",
+            True,
+        )
 
     # Check moderate import → step down, keep boost active unless at ideal
     if avg_import_5min_w > solar_release_threshold_low:
@@ -150,5 +167,8 @@ def decide_solar(
     if current_temperature is not None:
         target = min(target, current_temperature + 1.0)
         target = max(target, current_temperature + solar_step_delta)
+    # The room + 1.0 cap limits stepping up; it never lowers the setpoint while exporting.
+    if current_setpoint is not None:
+        target = max(target, current_setpoint)
     target = _snap_half(min(max(target, temp_ideal), max_boost_temp))
     return target, "solar_incremental", True
