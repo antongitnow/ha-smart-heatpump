@@ -183,3 +183,37 @@ def test_replay_matches_coordinator_semantics():
     for i, (got, want) in enumerate(zip(js, expected)):
         assert got[1:] == want[1:], f"tick {i}: {got} != {want}"
         assert got[0] == pytest.approx(want[0]), f"tick {i}"
+
+
+def test_boost_import_counts_only_heat_pump_draw():
+    """With a heat pump meter, boost-time import is capped at the heat pump's draw."""
+    # 30 min export (boost starts), then 30 min with a 2.5 kW other load on top
+    # of a 400 W heat pump, all at 10 s readings.
+    readings = [(ts, -800 if ts < 1800 else 2500) for ts in range(0, 3600, 10)]
+    # Heat pump only reports changes: off, then on at 400 W, then 1000 W halfway
+    # through one 5-min bar (time-weighted mean 700 W for that bar).
+    hp = [(0, 9), (600, 400), (2550, 1000)]
+    params = dict(start=0, end=3600 * 1000, interval=5, ideal=21.0, S=300.0, L=200.0,
+                  H=600.0, step=0.5, minBoost=60.0, maxBoost=24.5)
+    to_ms = lambda series: [[ts * 1000, v] for ts, v in series]  # noqa: E731
+    out = _run_node(
+        "const w = card.replay(input.r, [], input.p, input.hp);"
+        "const wo = card.replay(input.r, [], input.p);"
+        "console.log(JSON.stringify({ticks: w.ticks.map((k) => [k.bar, k.hp, k.active]),"
+        " with: w.stats.importBoost, without: wo.stats.importBoost, known: w.stats.hpKnown}));",
+        {"r": to_ms(readings), "hp": to_ms(hp), "p": params},
+    )
+    ticks = out["ticks"]
+    assert ticks[8][1] == pytest.approx(700)  # tick at 2700 s covers 2400-2700 s: 400 W then 1000 W
+    h = 5 / 60 / 1000
+    expected_with = sum(
+        min(max(0, ticks[i + 1][0]), ticks[i + 1][1]) * h
+        for i in range(len(ticks) - 1) if ticks[i][2]
+    )
+    expected_without = sum(
+        max(0, ticks[i + 1][0]) * h for i in range(len(ticks) - 1) if ticks[i][2]
+    )
+    assert out["known"] is True
+    assert out["with"] == pytest.approx(expected_with)
+    assert out["without"] == pytest.approx(expected_without)
+    assert out["with"] < out["without"]  # the 2.5 kW other load isn't blamed on the boost

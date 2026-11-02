@@ -116,6 +116,7 @@ class SmartHeatpumpRuleSensor(_BaseSensor):
         attrs["indoor_temp_entity"] = (
             c._opt(CONF_TEMP_SENSOR) or c._opt(CONF_THERMOSTAT) or None
         )
+        attrs["heatpump_power_entity"] = c.heatpump_power_entity
         return attrs
 
 

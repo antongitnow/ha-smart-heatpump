@@ -240,13 +240,13 @@ A day of grid power with your three solar thresholds drawn on it. Drag a line to
 - **Dashed lines** — *Surplus* (export needed to start a boost), *Release low* (import that steps the setpoint down) and *Release high* (import that resets the boost). Drag a line or its label; with keyboard focus on a label, arrow keys move it by 50 W.
 - **Shaded columns** — when a boost would have been active.
 - **Bottom strip** — the replayed setpoint and the measured room temperature.
-- **Tiles** — boost time, export used while boosting, grid import while boosting, export left unused, and boost starts / resets, each compared with your saved thresholds. Many starts and resets mean the thresholds are too close together and the boost flaps on and off.
+- **Tiles** — boost time, export used while boosting, grid import while boosting, export left unused, and boost starts / resets, each compared with your saved thresholds. With a **heat pump power sensor** configured, grid import while boosting counts only what the heat pump drew from the grid (other appliances get the solar first), so a kettle or dishwasher running during a boost isn't blamed on it. Without one it is the whole house's import. Many starts and resets mean the thresholds are too close together and the boost flaps on and off.
 - **What do the three lines do?** — an expandable explanation of each threshold, filled in with your current values. Hovering a line's label shows a one-line summary.
 - **Save thresholds** writes the new values to the number entities. **Back to saved** discards the edit.
 
 Use the arrows to replay one of the last 10 days (the recorder's default history). Hover a bar to see the rule the controller would have applied at that moment.
 
-The replay uses the recorded P1 and room-temperature history and your saved ideal temperature, step delta, minimum boost duration and maximum boost temperature. It ignores the heating-season months and the forecast-temperature skip, and starts each day with the boost off.
+The heat pump's recorded run times come from what the controller really did that day, so when a replayed boost falls at another time the heat pump figures are an estimate. The replay uses the recorded P1 and room-temperature history and your saved ideal temperature, step delta, minimum boost duration and maximum boost temperature. It ignores the heating-season months and the forecast-temperature skip, and starts each day with the boost off.
 
 ```yaml
 type: custom:smart-heatpump-card
@@ -257,6 +257,7 @@ end_hour: 20
 # entity: sensor.smart_heatpump_controller_active_rule   # only needed with several controllers
 # power_entity: sensor.p1_meter_power                    # override the configured P1 sensor
 # indoor_temp_entity: sensor.living_room_temperature     # override the room temperature source
+# heatpump_power_entity: sensor.heat_pump_power           # override the heat pump power sensor
 ```
 
 ---
@@ -283,7 +284,7 @@ The sensor also exposes these attributes:
 - `current_power` — current import/export reading
 - `avg_import_5min_w` — 5-minute rolling average import
 - `indoor_temp` / `outdoor_temp` — latest readings
-- `power_entity` / `indoor_temp_entity` — the configured source sensors (used by the tuner card)
+- `power_entity` / `indoor_temp_entity` / `heatpump_power_entity` — the configured source sensors (used by the tuner card)
 
 ---
 

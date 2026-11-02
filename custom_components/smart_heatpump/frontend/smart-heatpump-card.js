@@ -115,7 +115,28 @@ function firstAfter(arr, t) {
   return lo;
 }
 
-export function replay(readings, temps, p) {
+// Time-weighted mean of a sensor over (a, b] — each reading holds until the
+// next. Returns null when the sensor has no reading by b.
+function timeMean(series, a, b) {
+  let i = firstAfter(series, a) - 1;
+  if (i < 0) {
+    if (!series.length || series[0][0] > b) return null;
+    i = 0;
+    a = series[0][0];
+  }
+  let sum = 0, t = a, v = series[i][1];
+  for (let j = i + 1; j < series.length && series[j][0] <= b; j++) {
+    sum += v * (series[j][0] - t);
+    t = series[j][0];
+    v = series[j][1];
+  }
+  sum += v * (b - t);
+  return b > a ? sum / (b - a) : v;
+}
+
+// hp (optional): heat pump power [[ms, watts]], used to count only the grid
+// import the heat pump itself caused while boosting.
+export function replay(readings, temps, p, hp = null) {
   const iv = p.interval * 60000;
   const prefix = [0];
   for (const r of readings) prefix.push(prefix[prefix.length - 1] + r[1]);
@@ -130,7 +151,7 @@ export function replay(readings, temps, p) {
     const bar = mean(T - iv, T);
     const win = mean(T - AVG_WINDOW_MS, T);
     if (win.n < MIN_READINGS) {
-      ticks.push({ t: T, bar: bar.n ? bar.v : null, active, sp: sp ?? p.ideal, rule: "waiting_for_data", temp: null });
+      ticks.push({ t: T, bar: bar.n ? bar.v : null, hp: hp ? timeMean(hp, T - iv, T) : null, active, sp: sp ?? p.ideal, rule: "waiting_for_data", temp: null });
       continue;
     }
     const ti = firstAfter(temps, T) - 1;
@@ -151,14 +172,14 @@ export function replay(readings, temps, p) {
     else if (!next) activatedAt = null;
     active = next;
     sp = target;
-    ticks.push({ t: T, bar: bar.n ? bar.v : null, active, sp, rule, temp });
+    ticks.push({ t: T, bar: bar.n ? bar.v : null, hp: hp ? timeMean(hp, T - iv, T) : null, active, sp, rule, temp });
   }
-  return { ticks, stats: summarise(ticks, p.interval) };
+  return { ticks, stats: summarise(ticks, p.interval, Boolean(hp)) };
 }
 
-function summarise(ticks, interval) {
+function summarise(ticks, interval, hpKnown) {
   const h = interval / 60;
-  const s = { boostH: 0, exportBoost: 0, importBoost: 0, exportUnused: 0, starts: 0, resets: 0, peak: null };
+  const s = { boostH: 0, exportBoost: 0, importBoost: 0, exportUnused: 0, starts: 0, resets: 0, peak: null, hpKnown };
   let was = false;
   ticks.forEach((k, i) => {
     if (k.active && !was) s.starts++;
@@ -169,7 +190,10 @@ function summarise(ticks, interval) {
     const next = ticks[i + 1];
     if (!next || next.bar === null) return;
     const exp = Math.max(0, -next.bar) * h / 1000;
-    const imp = Math.max(0, next.bar) * h / 1000;
+    // With a heat pump meter, other loads get the solar first and the heat
+    // pump's share of the import is what it drew beyond that: min(import, draw)
+    const gridW = Math.max(0, next.bar);
+    const imp = (hpKnown && next.hp !== null ? Math.min(gridW, Math.max(0, next.hp)) : gridW) * h / 1000;
     if (k.active) {
       s.boostH += h;
       s.exportBoost += exp;
@@ -362,6 +386,7 @@ class SmartHeatpumpCard extends HTMLElement {
     const attrs = this._hass.states[this._entities.rule]?.attributes || {};
     const power = this._config.power_entity || attrs.power_entity;
     const tempEntity = this._config.indoor_temp_entity || attrs.indoor_temp_entity;
+    const hpEntity = this._config.heatpump_power_entity || attrs.heatpump_power_entity;
     if (!power) {
       this._message("No power sensor known yet. Update the integration, or set `power_entity:` on the card.");
       return;
@@ -371,7 +396,7 @@ class SmartHeatpumpCard extends HTMLElement {
     this._loading = true;
     const iso = (ms) => new Date(ms).toISOString();
     try {
-      const [p, t] = await Promise.all([
+      const [p, t, h] = await Promise.all([
         this._hass.callWS({
           type: "history/history_during_period",
           start_time: iso(day - AVG_WINDOW_MS),
@@ -392,13 +417,29 @@ class SmartHeatpumpCard extends HTMLElement {
               significant_changes_only: false,
             })
           : Promise.resolve({}),
+        hpEntity
+          ? this._hass.callWS({
+              type: "history/history_during_period",
+              start_time: iso(day),
+              end_time: iso(end),
+              entity_ids: [hpEntity],
+              minimal_response: true,
+              no_attributes: true,
+              significant_changes_only: false,
+            })
+          : Promise.resolve({}),
       ]);
       const readings = this._series(p[power], (s) => s.s);
       const temps = tempEntity
         ? this._series(t[tempEntity], (s) => (tempEntity.startsWith("climate.") ? s.a?.current_temperature : s.s))
         : [];
+      let hp = null;
+      if (hpEntity) {
+        const kw = this._hass.states[hpEntity]?.attributes?.unit_of_measurement === "kW";
+        hp = this._series(h[hpEntity], (s) => s.s).map(([ts, v]) => [ts, kw ? v * 1000 : v]);
+      }
       if (day !== this._day) return; // user moved on while loading
-      this._data = { day, end, readings, temps };
+      this._data = { day, end, readings, temps, hp };
       this._renderChart();
     } catch (err) {
       this._message(`Couldn't load history: ${esc(err.message || err)}`);
@@ -553,7 +594,7 @@ class SmartHeatpumpCard extends HTMLElement {
   _renderChart() {
     const chart = this.shadowRoot.getElementById("chart");
     if (!chart || !this._data) return;
-    const { day, end, readings, temps } = this._data;
+    const { day, end, readings, temps, hp } = this._data;
     if (!readings.length) {
       this._message("No power readings recorded for this day.");
       return;
@@ -566,8 +607,8 @@ class SmartHeatpumpCard extends HTMLElement {
     if (this._replayKey !== key) {
       this._replayKey = key;
       this._replays = [
-        replay(readings, temps, { ...base, S: cur.S, L: cur.L, H: cur.H }),
-        replay(readings, temps, { ...base, S: saved.S, L: saved.L, H: saved.H }),
+        replay(readings, temps, { ...base, S: cur.S, L: cur.L, H: cur.H }, hp),
+        replay(readings, temps, { ...base, S: saved.S, L: saved.L, H: saved.H }, hp),
       ];
     }
     const [run, ref] = this._replays;
@@ -741,7 +782,7 @@ class SmartHeatpumpCard extends HTMLElement {
     const kpis = [
       ["Boost time", `${s.boostH.toFixed(1)} h`, delta(s.boostH, r.boostH, " h", false)],
       ["Export used while boosting", `${s.exportBoost.toFixed(2)} kWh`, delta(s.exportBoost, r.exportBoost, " kWh", false, 2)],
-      ["Grid import while boosting", `${s.importBoost.toFixed(2)} kWh`, delta(s.importBoost, r.importBoost, " kWh", true, 2)],
+      [s.hpKnown ? "Heat pump grid import while boosting" : "Grid import while boosting (whole house)", `${s.importBoost.toFixed(2)} kWh`, delta(s.importBoost, r.importBoost, " kWh", true, 2)],
       ["Export not used", `${s.exportUnused.toFixed(2)} kWh`, delta(s.exportUnused, r.exportUnused, " kWh", true, 2)],
       ["Boosts / resets", `${s.starts} / ${s.resets}`, delta(s.starts + s.resets, r.starts + r.resets, "", true, 0)],
     ];
@@ -828,7 +869,8 @@ class SmartHeatpumpCard extends HTMLElement {
     if (!k) {
       el.textContent = "";
     } else {
-      const power = k.bar === null ? "no data" : `${k.bar < 0 ? "export" : "import"} ${fmtW(k.bar)}`;
+      let power = k.bar === null ? "no data" : `${k.bar < 0 ? "export" : "import"} ${fmtW(k.bar)}`;
+      if (k.hp !== null && k.hp !== undefined) power += ` · heat pump ${fmtW(k.hp)}`;
       const rule = k.rule.replace(/_/g, " ");
       el.textContent = `${hhmm(k.t - this._geom.iv)}–${hhmm(k.t)} · ${power} · ${rule} · setpoint ${k.sp.toFixed(1)} °C`;
     }
