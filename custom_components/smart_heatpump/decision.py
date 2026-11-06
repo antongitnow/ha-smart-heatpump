@@ -47,6 +47,7 @@ def decide_solar(
     boost_start_export_w: float = 0.0,
     battery_discharging: bool = False,
     battery_cooldown: bool = False,
+    battery_unavailable: bool = False,
 ) -> tuple[float, str, bool]:
     """Decide the target thermostat setpoint for the solar incremental flow.
 
@@ -74,6 +75,9 @@ def decide_solar(
             the reaction time.  Ends a running boost at once, even during the
             minimum boost duration.
         battery_cooldown: A battery reset happened recently — no new boost yet.
+        battery_unavailable: No usable battery reading.  Blocks a new boost;
+            ends a running one (the caller passes it for a running boost once
+            the outage has lasted the reaction time).
 
     Returns:
         (target_setpoint, rule_name, new_solar_boost_active)
@@ -88,6 +92,13 @@ def decide_solar(
 
     # Branch: solar boost is NOT currently active
     if not solar_boost_active:
+        if battery_unavailable:
+            # Can't tell whether a boost would run on the battery — don't start one
+            return (
+                current_setpoint if current_setpoint is not None else temp_ideal,
+                "battery_unavailable",
+                False,
+            )
         if battery_cooldown:
             return (
                 current_setpoint if current_setpoint is not None else temp_ideal,
@@ -118,6 +129,8 @@ def decide_solar(
     # A boost never runs on battery power — this overrides the minimum run time
     if battery_discharging:
         return temp_ideal, "solar_reset_battery", False
+    if battery_unavailable:
+        return temp_ideal, "solar_reset_battery_unavailable", False
 
     # Minimum run time protection — keep boost active and setpoint ahead of room temp
     in_min_run = min_boost_minutes > 0 and boost_active_seconds < min_boost_minutes * 60

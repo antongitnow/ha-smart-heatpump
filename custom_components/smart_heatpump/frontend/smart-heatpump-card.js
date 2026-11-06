@@ -65,12 +65,13 @@ export function decideSolar(i) {
   const {
     active, avgExport, avgImport, temp = null, setpoint = null, ideal,
     S, L, H, step, boostSeconds = 0, minBoostMin = 0, maxBoost = 25, exportNow = 0,
-    startExport = 0, batteryDischarging = false, batteryCooldown = false,
+    startExport = 0, batteryDischarging = false, batteryCooldown = false, batteryUnavailable = false,
   } = i;
   const hold = setpoint !== null ? setpoint : ideal;
   const clamp = (t) => snapHalf(Math.min(Math.max(t, ideal), maxBoost));
 
   if (!active) {
+    if (batteryUnavailable) return [hold, "battery_unavailable", false];
     if (batteryCooldown) return [hold, "solar_battery_cooldown", false];
     if (avgExport > Math.max(S, startExport)) {
       let t = temp !== null ? temp + step : ideal + step;
@@ -81,6 +82,7 @@ export function decideSolar(i) {
   }
 
   if (batteryDischarging) return [ideal, "solar_reset_battery", false];
+  if (batteryUnavailable) return [ideal, "solar_reset_battery_unavailable", false];
 
   if (minBoostMin > 0 && boostSeconds < minBoostMin * 60) {
     let t;
@@ -184,7 +186,9 @@ const neg = (v) => Math.max(0, -v);
 // decisions then use the grid power without the battery, like the coordinator,
 // with p.hpFirst, p.startExport, p.batLimit, p.batReact and p.batCool.
 // A battery reset the controller makes between evaluations is shown at the
-// next evaluation.
+// next evaluation, and runs without P1 data like the coordinator's. The
+// history has no unavailable readings, so the battery only counts as
+// unavailable before its first reading.
 export function replay(readings, temps, p, hp = null, bat = null) {
   const iv = p.interval * 60000;
   const prefix = [0];
@@ -206,29 +210,31 @@ export function replay(readings, temps, p, hp = null, bat = null) {
       bat: bat ? timeMean(bat, T - iv, T) : null,
       batDis: bat ? timeMean(bat, T - iv, T, pos) : null,
     };
-    if (win.n < MIN_READINGS) {
+    const extra = {};
+    let dis = 0, chg = 0, now = 0;
+    if (bat) {
+      dis = timeMean(bat, T - AVG_WINDOW_MS, T, pos);
+      chg = timeMean(bat, T - AVG_WINDOW_MS, T, neg);
+      const bi = firstAfter(bat, T) - 1;
+      now = bi >= 0 ? bat[bi][1] : null;
+      const lost = dis === null || now === null;
+      if (lost) dis = chg = now = 0;
+      extra.startExport = p.startExport;
+      extra.batteryDischarging = active && !lost && dischargeSustainedWithin(bat, T - iv, T, p.batLimit, p.batReact * 60000);
+      extra.batteryUnavailable = lost;
+      extra.batteryCooldown = batResetAt !== null && T - batResetAt < p.batCool * 60000;
+    }
+    const resetDue = active && Boolean(extra.batteryDischarging || extra.batteryUnavailable);
+    if (win.n < MIN_READINGS && !resetDue) {
       ticks.push({ ...base, active, sp: sp ?? p.ideal, rule: "waiting_for_data", temp: null });
       continue;
     }
-    let net = win.v, netNow = win.last;
-    const extra = {};
+    // A battery reset doesn't need P1 data
+    let net = win.n >= MIN_READINGS ? win.v : 0;
+    let netNow = win.n >= MIN_READINGS ? win.last : 0;
     if (bat) {
-      let dis = timeMean(bat, T - AVG_WINDOW_MS, T, pos);
-      let chg = timeMean(bat, T - AVG_WINDOW_MS, T, neg);
-      const bi = firstAfter(bat, T) - 1;
-      let now = bi >= 0 ? bat[bi][1] : null;
-      if (dis === null || now === null) {
-        if (!active) {
-          ticks.push({ ...base, active, sp: sp ?? p.ideal, rule: "battery_unavailable", temp: null });
-          continue;
-        }
-        dis = chg = now = 0;
-      }
       net += dis - (p.hpFirst ? chg : 0);
       netNow += pos(now) - (p.hpFirst ? neg(now) : 0);
-      extra.startExport = p.startExport;
-      extra.batteryDischarging = active && dischargeSustainedWithin(bat, T - iv, T, p.batLimit, p.batReact * 60000);
-      extra.batteryCooldown = batResetAt !== null && T - batResetAt < p.batCool * 60000;
     }
     const ti = firstAfter(temps, T) - 1;
     const temp = ti >= 0 ? temps[ti][1] : null;
@@ -245,7 +251,7 @@ export function replay(readings, temps, p, hp = null, bat = null) {
       exportNow: Math.max(0, -netNow),
       ...extra,
     });
-    if (rule === "solar_reset_battery") batResetAt = T;
+    if (rule === "solar_reset_battery" || rule === "solar_reset_battery_unavailable") batResetAt = T;
     if (next && !active) activatedAt = T;
     else if (!next) activatedAt = null;
     active = next;
@@ -261,7 +267,7 @@ function summarise(ticks, interval, hpKnown) {
   let was = false;
   ticks.forEach((k, i) => {
     if (k.active && !was) s.starts++;
-    if (k.rule === "solar_reset" || k.rule === "solar_reset_battery") s.resets++;
+    if (["solar_reset", "solar_reset_battery", "solar_reset_battery_unavailable"].includes(k.rule)) s.resets++;
     was = k.active;
     if (k.active) s.peak = Math.max(s.peak ?? k.sp, k.sp);
     // The state decided at tick i applies until tick i+1, whose bar covers that span

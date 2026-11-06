@@ -77,6 +77,7 @@ def _random_case(rng: random.Random) -> dict:
         "startExport": rng.choice([0.0, 750.0, rng.uniform(0, 2000)]),
         "batteryDischarging": rng.random() < 0.2,
         "batteryCooldown": rng.random() < 0.2,
+        "batteryUnavailable": rng.random() < 0.2,
     }
 
 
@@ -101,6 +102,7 @@ def _python_decide(c: dict) -> list:
         boost_start_export_w=c["startExport"],
         battery_discharging=c["batteryDischarging"],
         battery_cooldown=c["batteryCooldown"],
+        battery_unavailable=c["batteryUnavailable"],
     )
     return [target, rule, active]
 
@@ -270,22 +272,25 @@ def _python_replay_battery(readings: list, temps: list, bat: list, p: dict) -> l
     neg = lambda v: max(0.0, -v)  # noqa: E731
     while t <= p["end"]:
         window = [(ts, w) for (ts, w) in readings if t - AVG_WINDOW_S < ts <= t]
-        if len(window) < MIN_READINGS:
-            out.append([sp if sp is not None else p["ideal"], "waiting_for_data", active])
-            t += iv
-            continue
         dis = _battery.time_weighted_mean(bat, t - AVG_WINDOW_S, t, pos)
         chg = _battery.time_weighted_mean(bat, t - AVG_WINDOW_S, t, neg)
         past = [w for (ts, w) in bat if ts <= t]
         now = past[-1] if past else None
-        if dis is None or now is None:
-            if not active:
-                out.append([sp if sp is not None else p["ideal"], "battery_unavailable", active])
-                t += iv
-                continue
+        lost = dis is None or now is None
+        if lost:
             dis = chg = now = 0.0
-        avg = _battery.effective_net_w(sum(w for _, w in window) / len(window), dis, chg, p["hpFirst"])
-        net_now = _battery.effective_net_w(window[-1][1], pos(now), neg(now), p["hpFirst"])
+        discharging = active and not lost and _battery.discharge_sustained_within(
+            bat, t - iv, t, p["batLimit"], p["batReact"] * 60
+        )
+        enough = len(window) >= MIN_READINGS
+        if not enough and not (active and (discharging or lost)):
+            out.append([sp if sp is not None else p["ideal"], "waiting_for_data", active])
+            t += iv
+            continue
+        p1_avg = sum(w for _, w in window) / len(window) if enough else 0.0
+        p1_now = window[-1][1] if enough else 0.0
+        avg = _battery.effective_net_w(p1_avg, dis, chg, p["hpFirst"])
+        net_now = _battery.effective_net_w(p1_now, pos(now), neg(now), p["hpFirst"])
         past_t = [c for (ts, c) in temps if ts <= t]
         sp, rule, new_active = decide_solar(
             current_month=1,
@@ -305,12 +310,11 @@ def _python_replay_battery(readings: list, temps: list, bat: list, p: dict) -> l
             max_boost_temp=p["maxBoost"],
             current_export_w=max(0.0, -net_now),
             boost_start_export_w=p["startExport"],
-            battery_discharging=active and _battery.discharge_sustained_within(
-                bat, t - iv, t, p["batLimit"], p["batReact"] * 60
-            ),
+            battery_discharging=discharging,
             battery_cooldown=reset_at is not None and t - reset_at < p["batCool"] * 60,
+            battery_unavailable=lost,
         )
-        if rule == "solar_reset_battery":
+        if rule in ("solar_reset_battery", "solar_reset_battery_unavailable"):
             reset_at = t
         if new_active and not active:
             activated_at = t
@@ -341,7 +345,7 @@ def _battery_day(seed: int) -> tuple[list, list, list]:
         else:
             battery = 0.0
         soc = min(1.0, max(0.0, soc - battery * 10 / 3600 / 1920))
-        if ts % 30 == 0:
+        if ts % 30 == 0 and ts >= 3 * 3600:  # battery history starts at 03:00
             bat.append((ts, round(battery)))
         if rng.random() < 0.01:
             continue
@@ -371,7 +375,8 @@ def test_battery_replay_matches_coordinator_semantics(hp_first):
     )
     assert len(js) == len(expected)
     rules = {row[1] for row in expected}
-    assert {"solar_incremental", "solar_reset_battery", "solar_battery_cooldown"} <= rules, rules
+    assert {"solar_incremental", "solar_reset_battery", "solar_battery_cooldown",
+            "battery_unavailable"} <= rules, rules
     for i, (got, want) in enumerate(zip(js, expected)):
         assert got[1:] == want[1:], f"tick {i}: {got} != {want}"
         assert got[0] == pytest.approx(want[0]), f"tick {i}"
@@ -393,3 +398,25 @@ def test_boost_import_counts_battery_discharge():
     )
     # Boost runs from 5 min to the end; the battery's 600 W counts in the six bars from 30 min
     assert out == pytest.approx(600 * (5 / 60) * 6 / 1000)
+
+
+def test_battery_reset_runs_without_p1_data():
+    """A boost on the battery ends even when the P1 meter stops reporting."""
+    # 30 min export starts a boost, then the P1 meter goes silent while the battery discharges
+    readings = [(ts, -1200) for ts in range(0, 1800, 10)]
+    bat = [(0, 0), (1800, 500)]
+    params = dict(start=0, end=3600, interval=5, ideal=21.0, S=300.0, L=200.0, H=600.0,
+                  step=0.5, minBoost=20.0, maxBoost=24.5, hpFirst=False, startExport=750.0,
+                  batLimit=50.0, batReact=2.0, batCool=30.0)
+    expected = _python_replay_battery(readings, [], bat, params)
+    to_ms = lambda series: [[ts * 1000, v] for ts, v in series]  # noqa: E731
+    js = _run_node(
+        "const r = card.replay(input.readings, [], input.p, null, input.bat);"
+        "console.log(JSON.stringify(r.ticks.map((k) => [k.sp, k.rule, k.active])));",
+        {"readings": to_ms(readings), "bat": to_ms(bat), "p": {**params, "end": 3600 * 1000}},
+    )
+    assert [row[1:] for row in js] == [row[1:] for row in expected]
+    rules = [row[1] for row in expected]
+    # The tick at 35 min has no P1 data in its window, yet resets the boost
+    assert rules[6] == "solar_reset_battery"
+    assert rules[7:] == ["waiting_for_data"] * 5

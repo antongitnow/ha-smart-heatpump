@@ -228,7 +228,8 @@ The controller only reads the battery and never controls it, so it works next to
 3. **Battery reset** (`solar_reset_battery`). When the battery discharges more than the **Battery discharge limit** (default 50 W) for the **Battery reaction time** (default 2 min) during a boost, the setpoint goes straight back to ideal and the boost ends. This overrides the minimum boost duration, and the controller acts on the battery sensor's own readings instead of waiting for its next evaluation.
 4. **Cooldown** (`solar_battery_cooldown`). After a battery reset, no new boost starts for the **Cooldown after battery reset** (default 30 min), so passing clouds don't make boosts start and stop over and over.
 5. **Release thresholds** still apply, to the import without the battery.
-6. **Battery sensor unavailable** (`battery_unavailable`): no new boost starts; a running boost continues on the P1 rules.
+6. **Battery sensor unavailable** (`battery_unavailable`): no new boost starts. A running boost ends once the sensor has been unavailable for the reaction time (`solar_reset_battery_unavailable`) — the battery could be feeding it unseen. This counts as a battery reset, with the same cooldown.
+7. **Battery resets don't wait for the P1 meter.** When the P1 meter has too little recent data (e.g. right after a restart), the controller skips its decision, except a battery reset.
 
 **Heat pump boost draw** at 0 (the default) means *learn it*: the controller learns the heat pump's draw while it runs during a boost, from the heat pump power sensor (a moving average over about 2 hours), and assumes 750 W until it has seen one. Set a value to use that instead. The **Active rule** sensor shows the value in use as `boost_draw_w`.
 
@@ -301,7 +302,7 @@ Use the arrows to replay one of the last 10 days (the recorder's default history
 
 The heat pump's recorded run times come from what the controller really did that day, so when a replayed boost falls at another time the heat pump figures are an estimate. The replay uses the recorded P1 and room-temperature history and your saved ideal temperature, step delta, minimum boost duration and maximum boost temperature. It ignores the heating-season months and the forecast-temperature skip, and starts each day with the boost off.
 
-With a home battery the replay also uses the recorded battery history and the battery settings, and the bars stay the P1 meter's readings. Like the heat pump, the battery would have behaved differently when a replayed boost falls at another time, so the battery figures are an estimate too. A battery reset the controller makes between evaluations shows at the next one.
+With a home battery the replay also uses the recorded battery history and the battery settings, and the bars stay the P1 meter's readings. Like the heat pump, the battery would have behaved differently when a replayed boost falls at another time, so the battery figures are an estimate too. A battery reset the controller makes between evaluations shows at the next one. The history keeps no unavailable readings, so the replay can't show a reset for an unavailable battery sensor.
 
 ```yaml
 type: custom:smart-heatpump-card
@@ -336,6 +337,7 @@ The **Active rule** sensor shows the controller's current decision:
 | `solar_reset_battery` | Battery discharging during a boost — resetting setpoint to ideal and deactivating boost |
 | `solar_battery_cooldown` | Waiting after a battery reset — no new boost yet |
 | `battery_unavailable` | Battery sensor unavailable — no new boost |
+| `solar_reset_battery_unavailable` | Battery sensor unavailable during a boost — resetting setpoint to ideal and deactivating boost |
 
 The sensor also exposes these attributes:
 - `solar_boost_active` — whether the solar boost is currently active

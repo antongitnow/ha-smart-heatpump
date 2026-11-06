@@ -28,7 +28,13 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .battery import DischargeWatch, effective_net_w, time_weighted_mean, to_discharge_w
+from .battery import (
+    DischargeWatch,
+    UnavailableWatch,
+    effective_net_w,
+    time_weighted_mean,
+    to_discharge_w,
+)
 from .const import (
     CONF_ACTIVE_MONTHS,
     CONF_BATTERY_POSITIVE,
@@ -75,6 +81,9 @@ _ENERGY_HEARTBEAT = timedelta(minutes=1)
 _ENERGY_STORAGE_KEY = "smart_heatpump_solar_energy"
 _ENERGY_SAVE_DELAY_S = 60
 
+# Rules that end a boost because of the home battery
+_BATTERY_RESETS = ("solar_reset_battery", "solar_reset_battery_unavailable")
+
 
 class SmartHeatpumpCoordinator:
     """Manages the evaluation loop and state for the Smart Heatpump Controller."""
@@ -116,6 +125,7 @@ class SmartHeatpumpCoordinator:
         # Home battery — the priority switch pushes updates here
         self.heatpump_first: bool = False
         self._battery_watch = DischargeWatch()
+        self._battery_lost = UnavailableWatch()
         self._battery_check: CALLBACK_TYPE | None = None
         self._battery_eval_pending: bool = False
         self._battery_reset_at: float | None = None  # UTC timestamp
@@ -338,12 +348,16 @@ class SmartHeatpumpCoordinator:
         has_battery = bool(self.battery_power_entity)
         battery_now = self.read_battery_discharge_w() if has_battery else None
         now_ts = dt_util.utcnow().timestamp()
-        battery_discharging = False
+        battery_discharging = battery_lost = False
         if has_battery:
+            reaction_s = cfg.get("battery_reaction_minutes", 2.0) * 60
             self._battery_watch.update(now_ts, battery_now, cfg.get("battery_discharge_limit", 50.0))
-            battery_discharging = self._solar_boost_active and self._battery_watch.sustained(
-                now_ts, cfg.get("battery_reaction_minutes", 2.0) * 60
-            )
+            self._battery_lost.update(now_ts, battery_now is not None)
+            if self._solar_boost_active:
+                battery_discharging = self._battery_watch.sustained(now_ts, reaction_s)
+                battery_lost = self._battery_lost.sustained(now_ts, reaction_s)
+        # A running boost must end on the battery, whatever else is missing
+        battery_reset_due = battery_discharging or battery_lost
 
         # Store snapshots for notification / sensor attributes
         self._last_net_power = net_power
@@ -389,7 +403,7 @@ class SmartHeatpumpCoordinator:
             avg_forecast_temp = sum(forecast_temps) / len(forecast_temps)
             self._last_avg_forecast_temp = round(avg_forecast_temp, 1)
             # A boost running on the battery is still reset on a warm forecast
-            if avg_forecast_temp >= forecast_skip_threshold and not battery_discharging:
+            if avg_forecast_temp >= forecast_skip_threshold and not battery_reset_due:
                 _LOGGER.info(
                     "Skipping solar boost — 24h forecast avg %.1f°C >= threshold %.1f°C",
                     avg_forecast_temp,
@@ -403,7 +417,7 @@ class SmartHeatpumpCoordinator:
         # Query HA's recorder for all P1 readings in the last N minutes.
         # The P1 meter reports every ~10s, giving ~30 readings per 5-min window.
         p1_averages = await self._async_read_p1_averages()
-        if p1_averages is None:
+        if p1_averages is None and not battery_reset_due:
             # Not enough P1 readings — skip solar decision entirely.
             # This prevents wrong boost activation/step-up when we have no data
             # (e.g. just after HA restart, recorder not ready yet).
@@ -414,21 +428,22 @@ class SmartHeatpumpCoordinator:
             self.active_rule = "waiting_for_data"
             self._notify_listeners()
             return
+        if p1_averages is None:
+            # A battery reset doesn't need P1 data
+            p1_averages = (0.0, 0.0, 0.0)
         avg_export_5min, avg_import_5min, avg_net_5min = p1_averages
         current_export = solar_export or 0.0
 
         # ---- Home battery: decide on the grid power without the battery ----
         boost_start_export = 0.0
-        battery_cooldown = False
+        battery_cooldown = battery_unavailable = False
         if has_battery:
             battery_avgs = await self._async_read_battery_averages()
             if battery_avgs is None or battery_now is None:
-                if not self._solar_boost_active:
-                    # Can't tell whether a boost would run on the battery — don't start one
-                    _LOGGER.info("Battery sensor unavailable — no new boost")
-                    self.active_rule = "battery_unavailable"
-                    self._notify_listeners()
-                    return
+                # Blocks a new boost at once; ends a running one once the
+                # outage has lasted the reaction time
+                battery_unavailable = battery_lost if self._solar_boost_active else True
+                _LOGGER.info("Battery sensor unavailable")
                 battery_avgs = (0.0, 0.0)
             avg_discharge, avg_charge = battery_avgs
             eff_avg = effective_net_w(avg_net_5min, avg_discharge, avg_charge, self.heatpump_first)
@@ -488,6 +503,7 @@ class SmartHeatpumpCoordinator:
             boost_start_export_w=boost_start_export,
             battery_discharging=battery_discharging,
             battery_cooldown=battery_cooldown,
+            battery_unavailable=battery_unavailable,
         )
 
         prev_boost_active = self._solar_boost_active
@@ -501,9 +517,9 @@ class SmartHeatpumpCoordinator:
                 self.solar_energy.count(today, "boosts")
             if rule == "solar_reset":
                 self.solar_energy.count(today, "resets")
-            if rule == "solar_reset_battery":
+            if rule in _BATTERY_RESETS:
                 self.solar_energy.count(today, "battery_resets")
-        if rule == "solar_reset_battery":
+        if rule in _BATTERY_RESETS:
             self._battery_reset_at = now_ts
 
         # Track when boost was activated
@@ -518,7 +534,7 @@ class SmartHeatpumpCoordinator:
             "solar_incremental",
             "solar_step_down",
             "solar_reset",
-            "solar_reset_battery",
+            *_BATTERY_RESETS,
             "solar_boost_deactivated",
             "solar_min_run",
         }
@@ -681,16 +697,21 @@ class SmartHeatpumpCoordinator:
 
     @callback
     def _check_battery(self, _now: Any = None) -> None:
-        """Evaluate at once when the battery has discharged during a boost for the reaction time."""
+        """Evaluate at once when, during a boost, the battery has discharged
+        (or been unreadable) for the reaction time."""
         if _now is not None:
             self._battery_check = None  # the scheduled check is firing
         cfg = self.config_values
         now = dt_util.utcnow().timestamp()
         reaction_s = cfg.get("battery_reaction_minutes", 2.0) * 60
-        self._battery_watch.update(
-            now, self.read_battery_discharge_w(), cfg.get("battery_discharge_limit", 50.0)
-        )
-        due = self._battery_watch.due_at(reaction_s)
+        discharge = self.read_battery_discharge_w()
+        self._battery_watch.update(now, discharge, cfg.get("battery_discharge_limit", 50.0))
+        self._battery_lost.update(now, discharge is not None)
+        dues = [
+            d for d in (self._battery_watch.due_at(reaction_s), self._battery_lost.due_at(reaction_s))
+            if d is not None
+        ]
+        due = min(dues) if dues else None
         if not self._solar_boost_active or due is None:
             if self._battery_check:
                 self._battery_check()

@@ -886,3 +886,26 @@ class TestHomeBattery:
             boost_start_export_w=750.0,
         )
         assert rule == "solar_incremental"
+
+
+class TestBatteryUnavailable:
+    def test_blocks_new_boost(self) -> None:
+        target, rule, boost = _decide(avg_export_5min_w=2000.0, battery_unavailable=True)
+        assert (target, rule, boost) == (21.0, "battery_unavailable", False)
+
+    def test_ends_running_boost_even_in_minimum_run(self) -> None:
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_export_5min_w=800.0,
+            current_setpoint=22.0,
+            boost_active_seconds=60,
+            min_boost_minutes=20,
+            battery_unavailable=True,
+        )
+        assert (target, rule, boost) == (21.0, "solar_reset_battery_unavailable", False)
+
+    def test_discharge_reset_takes_precedence(self) -> None:
+        _, rule, _ = _decide(
+            solar_boost_active=True, battery_discharging=True, battery_unavailable=True
+        )
+        assert rule == "solar_reset_battery"

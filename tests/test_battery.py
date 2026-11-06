@@ -16,6 +16,7 @@ _spec = importlib.util.spec_from_file_location("battery", _path)
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 DischargeWatch = _mod.DischargeWatch
+UnavailableWatch = _mod.UnavailableWatch
 discharge_sustained_within = _mod.discharge_sustained_within
 effective_net_w = _mod.effective_net_w
 time_weighted_mean = _mod.time_weighted_mean
@@ -106,3 +107,20 @@ class TestDischargeWatch:
         w.update(0, 300, 50)
         w.update(10, None, 50)
         assert w.over_since is None
+
+
+class TestUnavailableWatch:
+    def test_outage_sustained_after_reaction_time(self):
+        w = UnavailableWatch()
+        w.update(0, available=False)
+        w.update(30, available=False)
+        assert not w.sustained(60, 120)
+        assert w.sustained(120, 120)
+        assert w.due_at(120) == 120
+
+    def test_reading_ends_the_outage(self):
+        w = UnavailableWatch()
+        w.update(0, available=False)
+        w.update(60, available=True)
+        assert not w.sustained(500, 120)
+        assert w.due_at(120) is None

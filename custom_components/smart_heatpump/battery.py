@@ -116,3 +116,26 @@ class DischargeWatch:
     def due_at(self, reaction_s: float) -> float | None:
         """When the current run reaches the reaction time, or None without a run."""
         return None if self.over_since is None else self.over_since + reaction_s
+
+
+class UnavailableWatch:
+    """Tracks how long the battery sensor has given no usable reading.
+
+    While it can't be read, the battery may be feeding a boost unseen.
+    """
+
+    def __init__(self) -> None:
+        self.lost_since: float | None = None
+
+    def update(self, ts: float, available: bool) -> None:
+        if available:
+            self.lost_since = None
+        elif self.lost_since is None:
+            self.lost_since = ts
+
+    def sustained(self, ts: float, reaction_s: float) -> bool:
+        return self.lost_since is not None and ts - self.lost_since >= reaction_s
+
+    def due_at(self, reaction_s: float) -> float | None:
+        """When the current outage reaches the reaction time, or None while readable."""
+        return None if self.lost_since is None else self.lost_since + reaction_s

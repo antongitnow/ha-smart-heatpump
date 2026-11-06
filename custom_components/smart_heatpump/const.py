@@ -108,6 +108,7 @@ RULE_DESCRIPTIONS: dict[str, str] = {
     "solar_boost_holding": "Solar boost active - holding setpoint",
     "solar_min_run": "Minimum run time - keeping boost active",
     "solar_reset_battery": "Battery discharging during boost - resetting setpoint to ideal",
+    "solar_reset_battery_unavailable": "Battery sensor unavailable during boost - resetting setpoint to ideal",
     "solar_battery_cooldown": "Waiting after a battery reset - no new boost yet",
     "battery_unavailable": "Battery sensor unavailable - no new boost",
     "default": "Normal operation",
