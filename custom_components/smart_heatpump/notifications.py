@@ -20,6 +20,7 @@ def format_notification(
     config: dict[str, float],
     forecast_avg_24h: float | None = None,
     version: str | None = None,
+    battery_w: float | None = None,
 ) -> tuple[str, str]:
     """Build notification title and message for a setpoint change.
 
@@ -49,6 +50,14 @@ def format_notification(
     else:
         avg_str = f"Import {avg_import_5min:.0f}W"
 
+    # Home battery (discharge positive), only when one is configured
+    if battery_w is None:
+        battery_line = ""
+    elif abs(battery_w) < 1:
+        battery_line = "Battery: Idle\n"
+    else:
+        battery_line = f"Battery: {'Discharging' if battery_w > 0 else 'Charging'} {abs(battery_w):.0f}W\n"
+
     # Sanitize: underscores break Telegram Markdown parser,
     # square brackets are Markdown link syntax
     safe_rule = rule.replace("_", " ")
@@ -67,6 +76,7 @@ def format_notification(
         f"\n"
         f"Current power: {current_power_str}\n"
         f"5-min avg: {avg_str}\n"
+        f"{battery_line}"
         f"\n"
         f"Thresholds:\n"
         f"  Export surplus activate: {config['solar_surplus_threshold']:.0f}W export\n"

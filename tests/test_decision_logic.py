@@ -815,3 +815,74 @@ class TestStepDownBlockedWhileExporting:
         )
         assert rule == "solar_step_down"
         assert target == pytest.approx(22.5)
+
+
+class TestHomeBattery:
+    """A boost never runs on battery power."""
+
+    def test_battery_discharge_resets_running_boost(self) -> None:
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=100.0,  # below release low: would just hold
+            current_temperature=21.5,
+            current_setpoint=22.0,
+            boost_active_seconds=3600,
+            battery_discharging=True,
+        )
+        assert (target, rule, boost) == (21.0, "solar_reset_battery", False)
+
+    def test_battery_reset_overrides_minimum_boost_duration(self) -> None:
+        _, rule, boost = _decide(
+            solar_boost_active=True,
+            current_setpoint=22.0,
+            boost_active_seconds=300,
+            min_boost_minutes=20,
+            battery_discharging=True,
+        )
+        assert rule == "solar_reset_battery"
+        assert boost is False
+
+    def test_battery_discharge_ignored_without_boost(self) -> None:
+        _, rule, boost = _decide(avg_export_5min_w=0.0, battery_discharging=True)
+        assert rule == "no_solar_action"
+        assert boost is False
+
+    def test_cooldown_blocks_new_boost(self) -> None:
+        target, rule, boost = _decide(avg_export_5min_w=2000.0, battery_cooldown=True)
+        assert rule == "solar_battery_cooldown"
+        assert boost is False
+        assert target == 21.0
+
+    def test_cooldown_does_not_end_running_boost(self) -> None:
+        _, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_export_5min_w=800.0,
+            current_temperature=21.5,
+            current_setpoint=22.0,
+            battery_cooldown=True,
+        )
+        assert rule == "solar_incremental"
+        assert boost is True
+
+    def test_start_needs_the_heat_pump_draw(self) -> None:
+        _, rule, _ = _decide(avg_export_5min_w=500.0, boost_start_export_w=750.0)
+        assert rule == "no_solar_action"
+        _, rule, boost = _decide(avg_export_5min_w=800.0, boost_start_export_w=750.0)
+        assert rule == "solar_incremental"
+        assert boost is True
+
+    def test_surplus_threshold_still_applies_above_the_draw(self) -> None:
+        _, rule, _ = _decide(
+            avg_export_5min_w=900.0, boost_start_export_w=750.0, solar_surplus_threshold=1000.0
+        )
+        assert rule == "no_solar_action"
+
+    def test_draw_does_not_gate_stepping_up(self) -> None:
+        _, rule, _ = _decide(
+            solar_boost_active=True,
+            avg_export_5min_w=400.0,
+            current_temperature=21.5,
+            current_setpoint=22.0,
+            boost_start_export_w=750.0,
+        )
+        assert rule == "solar_incremental"

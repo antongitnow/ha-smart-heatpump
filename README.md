@@ -158,6 +158,8 @@ All parameters appear as slider entities under the **Smart Heatpump Controller**
 | Electricity price | 0.30 | 0–1 | €/kWh | What you pay per kWh from the grid (used for savings) |
 | Feed-in compensation | 0.00 | 0–1 | €/kWh | What an exported kWh earns you (used for savings) |
 
+With a [home battery](#home-battery-optional) four more sliders appear: *Battery discharge limit*, *Battery reaction time*, *Cooldown after battery reset* and *Heat pump boost draw*.
+
 ---
 
 ## Notifications
@@ -206,11 +208,47 @@ Forecast.Solar predicts solar production based on your panel configuration. When
 
 ---
 
+## Home battery (optional)
+
+A home battery that aims for zero on the meter (NOM) changes what the P1 meter shows. It charges from solar surplus first, so the controller sees export only once the battery is full or the surplus is above its charge power. And it discharges to cover import, so during a boost it would quietly feed the heat pump while the meter stays at 0 W. Add the battery's power sensor and the controller handles both: **a boost never runs on battery power**. Outside a boost nothing changes — the heat pump can run on the battery as usual.
+
+1. Go to **Settings → Devices & services → Smart Heatpump Controller → Configure**.
+2. Select the **Home battery power sensor** (W or kW): the power flowing into or out of the battery.
+3. Set **Battery sensor is positive when** to *Discharging* or *Charging*, to match your sensor.
+4. Click **Submit**.
+
+For a **Zendure SolarFlow**, use `Battery Power` (`sensor.solarflow_..._bat_in_out`): positive while discharging. It measures the battery side, so it differs a few percent from what reaches the house, which is close enough here.
+
+The controller only reads the battery and never controls it, so it works next to whatever manages the battery (Zendure's own HEMS, the Zendure Manager, another HEMS). Make sure only one of those steers the battery.
+
+### Rules
+
+1. **Grid power without the battery.** The controller decides on what the meter would show without the battery: *P1 + battery discharge − battery charge*. Battery discharge always counts as import. Battery charging counts as export only with **Solar to heat pump before battery** on.
+2. **Start a boost** when the 5-minute average export is above both the surplus threshold and the **Heat pump boost draw** — so the surplus covers the heat pump and the battery doesn't have to.
+3. **Battery reset** (`solar_reset_battery`). When the battery discharges more than the **Battery discharge limit** (default 50 W) for the **Battery reaction time** (default 2 min) during a boost, the setpoint goes straight back to ideal and the boost ends. This overrides the minimum boost duration, and the controller acts on the battery sensor's own readings instead of waiting for its next evaluation.
+4. **Cooldown** (`solar_battery_cooldown`). After a battery reset, no new boost starts for the **Cooldown after battery reset** (default 30 min), so passing clouds don't make boosts start and stop over and over.
+5. **Release thresholds** still apply, to the import without the battery.
+6. **Battery sensor unavailable** (`battery_unavailable`): no new boost starts; a running boost continues on the P1 rules.
+
+**Heat pump boost draw** at 0 (the default) means *learn it*: the controller learns the heat pump's draw while it runs during a boost, from the heat pump power sensor (a moving average over about 2 hours), and assumes 750 W until it has seen one. Set a value to use that instead. The **Active rule** sensor shows the value in use as `boost_draw_w`.
+
+**Solar to heat pump before battery** (switch, default off):
+- **Off — battery first.** Only real export starts a boost: the battery fills first, and the boost gets what's left over. Once a boost runs, a battery aiming for zero on the meter cuts its charging to cover the heat pump, so in practice the heat pump then gets the surplus first.
+- **On — heat pump first.** Battery charging counts as surplus, so a boost can start on solar the battery would otherwise store.
+
+### Good to know
+
+- **The controller can't tell what the battery powers.** A kettle or oven during a boost makes the battery discharge too, which ends the boost and starts the cooldown.
+- **Up to a minute or two on the battery.** Between the start of a discharge and the reset, the battery can supply up to its full power — for an 800 W battery and the default reaction time, about 25 Wh.
+- **Fewer boosts on small surpluses.** A surplus below the heat pump's boost draw goes to the battery instead.
+- **Savings are slightly high.** They're valued against the feed-in price, but without the boost some of that solar would have gone into the battery rather than the grid.
+- **Cloud-connected batteries report late.** The reaction time absorbs a short delay; a local connection is more reliable.
+
 ## Daily figures and savings
 
 The controller measures what its boosts actually did, per day. Boost figures need only the P1 sensor; energy and savings also need your heat pump's **power sensor** (W or kW), selected under **Configure → Heat pump power sensor**.
 
-Every reading of the heat pump and P1 sensors is integrated over time. While a solar boost is active (and the controller is not in dry run), the heat pump's draw is split in two: other loads in the house get the solar first, so the heat pump's **grid share** is the smaller of its draw and the grid import, and the rest is **solar**. Outside a boost nothing counts as solar.
+Every reading of the heat pump and P1 sensors is integrated over time. While a solar boost is active (and the controller is not in dry run), the heat pump's draw is split in two: other loads in the house get the solar first, so the heat pump's **grid share** is the smaller of its draw and the grid import, and the rest is **solar**. Outside a boost nothing counts as solar. With a home battery, battery discharge counts as import: battery power is not solar, and *grid import while boosting* includes it.
 
 With a **heat output sensor** (Configure → Heat pump heat output sensor — for Quatt, `CIC Total power`), the heat delivered while boosting is split the same way: **heat from solar** is the heat output times the solar share of the heat pump's draw. At a COP of 5, 1 kWh of solar electricity becomes about 5 kWh of heat in the floor.
 
@@ -228,6 +266,7 @@ With a **heat output sensor** (Configure → Heat pump heat output sensor — fo
 | `Boost time today` | no | Minutes a boost was active. |
 | `Export not used today` | no | kWh exported while no boost was active. |
 | `Boosts today` / `Boost resets today` | no | Boosts started, and boosts reset on high import. |
+| `Battery resets today` | battery sensor | Boosts reset because the battery discharged. |
 
 The daily sensors have a midnight `last_reset` and `yesterday` / `last_7_days` / `this_month` attributes. Home Assistant keeps their long-term statistics, so a `statistics-graph` card shows them per day, week or month:
 
@@ -262,6 +301,8 @@ Use the arrows to replay one of the last 10 days (the recorder's default history
 
 The heat pump's recorded run times come from what the controller really did that day, so when a replayed boost falls at another time the heat pump figures are an estimate. The replay uses the recorded P1 and room-temperature history and your saved ideal temperature, step delta, minimum boost duration and maximum boost temperature. It ignores the heating-season months and the forecast-temperature skip, and starts each day with the boost off.
 
+With a home battery the replay also uses the recorded battery history and the battery settings, and the bars stay the P1 meter's readings. Like the heat pump, the battery would have behaved differently when a replayed boost falls at another time, so the battery figures are an estimate too. A battery reset the controller makes between evaluations shows at the next one.
+
 ```yaml
 type: custom:smart-heatpump-card
 # All optional:
@@ -272,6 +313,7 @@ end_hour: 20
 # power_entity: sensor.p1_meter_power                    # override the configured P1 sensor
 # indoor_temp_entity: sensor.living_room_temperature     # override the room temperature source
 # heatpump_power_entity: sensor.heat_pump_power           # override the heat pump power sensor
+# battery_power_entity: sensor.home_battery_power         # override the home battery power sensor
 ```
 
 ---
@@ -291,6 +333,9 @@ The **Active rule** sensor shows the controller's current decision:
 | `default` | Normal operation — maintaining ideal temperature |
 | `error_fallback` | Error occurred — using safe fallback temperature |
 | `initialising` | Controller starting up |
+| `solar_reset_battery` | Battery discharging during a boost — resetting setpoint to ideal and deactivating boost |
+| `solar_battery_cooldown` | Waiting after a battery reset — no new boost yet |
+| `battery_unavailable` | Battery sensor unavailable — no new boost |
 
 The sensor also exposes these attributes:
 - `solar_boost_active` — whether the solar boost is currently active
@@ -331,7 +376,7 @@ Pull requests and issues are welcome. Please open an issue first to discuss sign
 When contributing code:
 - Keep `decide_solar()` in `decision.py` as a pure function with no HA dependency.
 - Add a test case in `tests/test_decision_logic.py` for any new decision logic.
-- Mirror any change to `decide_solar()` in `decideSolar()` in `frontend/smart-heatpump-card.js`; `tests/test_card_replay.py` (needs Node.js) checks the two agree.
+- Mirror any change to `decide_solar()` in `decideSolar()` in `frontend/smart-heatpump-card.js`, and to the helpers in `battery.py` in `timeMean()` / `dischargeSustainedWithin()`; `tests/test_card_replay.py` (needs Node.js) checks they agree.
 - Run `pytest tests/` before submitting.
 
 ---

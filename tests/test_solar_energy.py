@@ -195,3 +195,60 @@ class TestHeatFromSolar:
         t.update(300, DAY, 500, -200, True)  # no heat meter reading
         t.update(600, DAY, 500, -200, True)
         assert t.value(DAY, "heat_solar") == 0.0
+
+
+class TestHomeBattery:
+    def test_battery_discharge_is_not_solar(self):
+        # Meter at 0 W while the battery covers 400 W of a 1 kW heat pump
+        assert grid_power_w(1000, 0, True, discharge_w=400) == 400
+        assert solar_power_w(1000, 0, True, discharge_w=400) == 600
+
+    def test_battery_charging_does_not_add_grid_share(self):
+        assert grid_power_w(700, 0, True, discharge_w=-500) == 0
+        assert solar_power_w(700, 0, True, discharge_w=-500) == 700
+
+    def test_integration_counts_discharge_as_grid(self):
+        t = SolarEnergyTracker()
+        for m in range(0, 61):
+            t.update(m * 60, DAY, 1000, 0, True, discharge_w=1000)
+        assert t.solar_kwh(DAY) == 0.0
+        assert t.value(DAY, "grid_boost") == pytest.approx(1000)
+
+    def test_battery_resets_are_counted(self):
+        t = SolarEnergyTracker()
+        t.count(DAY, "battery_resets")
+        assert t.value(DAY, "battery_resets") == 1
+
+
+class TestBoostDraw:
+    def test_learns_draw_while_running_during_boost(self):
+        t = SolarEnergyTracker()
+        assert t.boost_draw_w is None
+        t.update(0, DAY, 800, -100, True)
+        t.update(60, DAY, 800, -100, True)
+        assert t.boost_draw_w == pytest.approx(800)
+
+    def test_ignores_idle_heat_pump_and_time_outside_boost(self):
+        t = SolarEnergyTracker()
+        t.update(0, DAY, 15, -100, True)  # standby
+        t.update(60, DAY, 1500, -100, False)  # not boosting
+        t.update(120, DAY, 1500, -100, False)
+        assert t.boost_draw_w is None
+
+    def test_moves_slowly_towards_new_draw(self):
+        t = SolarEnergyTracker()
+        t.update(0, DAY, 800, -100, True)
+        t.update(60, DAY, 1600, -100, True)
+        t.update(660, DAY, 1600, -100, True)  # 10 min at 1.6 kW
+        assert 800 < t.boost_draw_w < 1000
+
+    def test_draw_persists(self):
+        t = SolarEnergyTracker()
+        t.update(0, DAY, 900, -100, True)
+        t.update(60, DAY, 900, -100, True)
+        u = SolarEnergyTracker()
+        u.load_dict(t.to_dict())
+        assert u.boost_draw_w == pytest.approx(900)
+        v = SolarEnergyTracker()
+        v.load_dict({"days": {}})
+        assert v.boost_draw_w is None

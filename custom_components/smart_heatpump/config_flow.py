@@ -16,6 +16,8 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_ACTIVE_MONTHS,
+    CONF_BATTERY_POSITIVE,
+    CONF_BATTERY_POWER,
     CONF_FORECAST_SOLAR,
     CONF_HEATPUMP_HEAT,
     CONF_HEATPUMP_POWER,
@@ -103,6 +105,7 @@ class SmartHeatpumpOptionsFlow(OptionsFlow):
                 CONF_TEMP_SENSOR,
                 CONF_HEATPUMP_POWER,
                 CONF_HEATPUMP_HEAT,
+                CONF_BATTERY_POWER,
                 CONF_P1_POWER,
                 CONF_WEATHER,
             ):
@@ -156,6 +159,27 @@ class SmartHeatpumpOptionsFlow(OptionsFlow):
                     selector.EntitySelectorConfig(
                         domain="sensor",
                         device_class="power",
+                    )
+                ),
+                vol.Optional(
+                    CONF_BATTERY_POWER,
+                    description={
+                        "suggested_value": current.get(CONF_BATTERY_POWER, "")
+                    },
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="power",
+                    )
+                ),
+                vol.Required(
+                    CONF_BATTERY_POSITIVE,
+                    default=current.get(CONF_BATTERY_POSITIVE, "discharging"),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=["discharging", "charging"],
+                        translation_key=CONF_BATTERY_POSITIVE,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 vol.Required(

@@ -17,6 +17,8 @@ CONF_TEMP_SENSOR = "temp_sensor_entity"
 CONF_FORECAST_SOLAR = "forecast_solar_entity"
 CONF_HEATPUMP_POWER = "heatpump_power_entity"
 CONF_HEATPUMP_HEAT = "heatpump_heat_entity"
+CONF_BATTERY_POWER = "battery_power_entity"
+CONF_BATTERY_POSITIVE = "battery_power_positive"  # "discharging" or "charging"
 CONF_NOTIFY_TARGETS = "notify_targets"
 CONF_ACTIVE_MONTHS = "active_months"
 
@@ -38,7 +40,15 @@ DEFAULTS: dict[str, float] = {
     # Savings: a solar kWh used by the heat pump is worth import − export price
     "price_import": 0.30,
     "price_export": 0.0,
+    # Home battery: a boost must never run on battery power
+    "battery_discharge_limit": 50.0,
+    "battery_reaction_minutes": 2.0,
+    "battery_cooldown_minutes": 30.0,
+    "heatpump_boost_draw": 0.0,  # 0 = learn from the heat pump power sensor
 }
+
+# Heat pump draw assumed during a boost until one has been learned
+DEFAULT_BOOST_DRAW_W = 750.0
 
 # Default active months — Sep through Apr (heating season)
 DEFAULT_ACTIVE_MONTHS: list[str] = [
@@ -78,6 +88,14 @@ NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]] = [
     ("price_export", "Feed-in compensation", 0, 1, 0.01, "€/kWh", "mdi:transmission-tower-export"),
 ]
 
+# Created only when a battery power sensor is configured
+BATTERY_NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]] = [
+    ("battery_discharge_limit", "Battery discharge limit", 0, 500, 10, "W", "mdi:battery-arrow-down"),
+    ("battery_reaction_minutes", "Battery reaction time", 0, 10, 0.5, "min", "mdi:timer-alert-outline"),
+    ("battery_cooldown_minutes", "Cooldown after battery reset", 0, 120, 5, "min", "mdi:timer-sand-paused"),
+    ("heatpump_boost_draw", "Heat pump boost draw", 0, 3000, 50, "W", "mdi:heat-pump-outline"),
+]
+
 # ---------------------------------------------------------------------------
 # Human-readable rule descriptions for notifications
 # ---------------------------------------------------------------------------
@@ -89,6 +107,9 @@ RULE_DESCRIPTIONS: dict[str, str] = {
     "no_solar_action": "No solar action",
     "solar_boost_holding": "Solar boost active - holding setpoint",
     "solar_min_run": "Minimum run time - keeping boost active",
+    "solar_reset_battery": "Battery discharging during boost - resetting setpoint to ideal",
+    "solar_battery_cooldown": "Waiting after a battery reset - no new boost yet",
+    "battery_unavailable": "Battery sensor unavailable - no new boost",
     "default": "Normal operation",
     "forecast_warm": "Forecast too warm - skipping solar boost",
     "error_fallback": "Error - using safe fallback temperature",

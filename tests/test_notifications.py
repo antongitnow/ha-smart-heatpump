@@ -221,3 +221,18 @@ def test_title_includes_version() -> None:
 def test_title_without_version() -> None:
     title, _ = _format()
     assert title == "Smart Heatpump"
+
+
+class TestBatteryLine:
+    def test_discharging(self) -> None:
+        _, message = _format(rule="solar_reset_battery", battery_w=320.0)
+        assert "Battery: Discharging 320W" in message
+        assert not TELEGRAM_UNSAFE_CHARS.search(message)
+        assert not PROBLEMATIC_UNICODE.search(message)
+
+    def test_charging_and_idle(self) -> None:
+        assert "Battery: Charging 500W" in _format(battery_w=-500.0)[1]
+        assert "Battery: Idle" in _format(battery_w=0.0)[1]
+
+    def test_no_line_without_battery(self) -> None:
+        assert "Battery" not in _format()[1]

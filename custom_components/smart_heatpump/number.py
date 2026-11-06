@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DEFAULTS, DOMAIN, NUMBER_DEFINITIONS
+from .const import BATTERY_NUMBER_DEFINITIONS, DEFAULTS, DOMAIN, NUMBER_DEFINITIONS
 
 
 async def async_setup_entry(
@@ -20,9 +20,12 @@ async def async_setup_entry(
     """Set up number entities from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
+    definitions = list(NUMBER_DEFINITIONS)
+    if coordinator.battery_power_entity:
+        definitions += BATTERY_NUMBER_DEFINITIONS
     entities: list[NumberEntity] = [
         SmartHeatpumpNumber(coordinator, key, name, min_val, max_val, step, unit, icon)
-        for key, name, min_val, max_val, step, unit, icon in NUMBER_DEFINITIONS
+        for key, name, min_val, max_val, step, unit, icon in definitions
     ]
 
     # Virtual thermostat for dry run mode — always created so it's available

@@ -38,11 +38,13 @@ async def async_setup_entry(
         ThermalLearningSensor(coordinator),
     ]
     # Boost statistics need only the P1 sensor; energy and savings need the
-    # heat pump meter; heat from solar also needs the heat output sensor
+    # heat pump meter; heat from solar also needs the heat output sensor;
+    # battery resets need the battery sensor
     has = {
         None: True,
         "power": bool(coordinator.heatpump_power_entity),
         "heat": bool(coordinator.heatpump_power_entity and coordinator.heatpump_heat_entity),
+        "battery": bool(coordinator.battery_power_entity),
     }
     entities += [DailyStatSensor(coordinator, *spec) for spec in DAILY_STATS if has[spec[-1]]]
     if has["power"]:
@@ -128,6 +130,25 @@ class SmartHeatpumpRuleSensor(_BaseSensor):
             c._opt(CONF_TEMP_SENSOR) or c._opt(CONF_THERMOSTAT) or None
         )
         attrs["heatpump_power_entity"] = c.heatpump_power_entity
+        if c.battery_power_entity:
+            attrs["battery_power_entity"] = c.battery_power_entity
+            attrs["battery_positive_discharge"] = c.battery_positive_discharge
+            attrs["heatpump_first"] = c.heatpump_first
+            attrs["boost_draw_w"] = round(c.boost_draw_w, 0)
+            attrs["boost_draw_learned_w"] = (
+                round(learned, 0) if (learned := c.solar_energy.boost_draw_w) is not None else None
+            )
+            discharge = c.read_battery_discharge_w()
+            if discharge is None:
+                attrs["battery_now"] = "unavailable"
+            elif abs(discharge) < 1:
+                attrs["battery_now"] = "Idle"
+            else:
+                attrs["battery_now"] = (
+                    f"{'Discharging' if discharge > 0 else 'Charging'} {abs(discharge):.0f}W"
+                )
+            if (until := c.battery_cooldown_until) is not None:
+                attrs["battery_cooldown_until"] = until.isoformat()
         return attrs
 
 
@@ -264,7 +285,7 @@ class SolarEnergyTodaySensor(_BaseSensor):
 
 
 # (translation_key, tracker field, scale to native unit, device class, unit,
-#  icon, display precision, extra meter needed: None, "power" or "heat")
+#  icon, display precision, extra sensor needed: None, "power", "heat" or "battery")
 DAILY_STATS: list[tuple] = [
     ("savings_today", "savings", 1.0, SensorDeviceClass.MONETARY, "EUR",
      "mdi:piggy-bank-outline", 2, "power"),
@@ -278,6 +299,7 @@ DAILY_STATS: list[tuple] = [
      UnitOfEnergy.KILO_WATT_HOUR, "mdi:transmission-tower-export", 2, None),
     ("boosts_today", "boosts", 1.0, None, None, "mdi:rocket-launch-outline", 0, None),
     ("resets_today", "resets", 1.0, None, None, "mdi:restart-alert", 0, None),
+    ("battery_resets_today", "battery_resets", 1.0, None, None, "mdi:battery-alert-variant-outline", 0, "battery"),
 ]
 
 

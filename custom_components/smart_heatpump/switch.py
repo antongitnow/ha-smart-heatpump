@@ -24,10 +24,13 @@ async def async_setup_entry(
 ) -> None:
     """Set up switch entities from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([
+    entities: list[SwitchEntity] = [
         SmartHeatpumpNotificationSwitch(coordinator),
         SmartHeatpumpDryRunSwitch(coordinator),
-    ])
+    ]
+    if coordinator.battery_power_entity:
+        entities.append(SmartHeatpumpHeatpumpFirstSwitch(coordinator))
+    async_add_entities(entities)
 
 
 class SmartHeatpumpNotificationSwitch(RestoreEntity, SwitchEntity):
@@ -71,6 +74,54 @@ class SmartHeatpumpNotificationSwitch(RestoreEntity, SwitchEntity):
         """Turn off notifications."""
         self._attr_is_on = False
         self._coordinator.notifications_enabled = False
+        self.async_write_ha_state()
+
+
+class SmartHeatpumpHeatpumpFirstSwitch(RestoreEntity, SwitchEntity):
+    """Surplus priority with a home battery: on = heat pump first, off = battery first.
+
+    With the heat pump first, battery charging counts as surplus, so a boost
+    can start on solar the battery would otherwise store.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "heatpump_first"
+    _attr_icon = "mdi:home-battery-outline"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator) -> None:
+        self._coordinator = coordinator
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_heatpump_first"
+        self._attr_is_on = False
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._coordinator.entry.entry_id)},
+            name="Smart Heatpump Controller",
+            manufacturer="Smart Heatpump",
+            model="v2",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Restore previous state on startup."""
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last and last.state is not None:
+            self._attr_is_on = last.state == "on"
+        self._coordinator.heatpump_first = self._attr_is_on
+
+    async def async_turn_on(self, **kwargs) -> None:
+        """Give the heat pump solar before the battery."""
+        self._attr_is_on = True
+        self._coordinator.heatpump_first = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        """Give the battery solar before the heat pump."""
+        self._attr_is_on = False
+        self._coordinator.heatpump_first = False
         self.async_write_ha_state()
 
 

@@ -3,10 +3,15 @@
 Runs the evaluation loop on a configurable interval, reads sensors,
 calls the solar incremental decision logic, and applies the result.
 Thermal model ML learning continues independently.
+
+With a home battery, decisions use the grid power as it would be without
+the battery, and a battery that discharges during a boost triggers an
+evaluation straight away instead of waiting for the next interval.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -23,8 +28,11 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .battery import DischargeWatch, effective_net_w, time_weighted_mean, to_discharge_w
 from .const import (
     CONF_ACTIVE_MONTHS,
+    CONF_BATTERY_POSITIVE,
+    CONF_BATTERY_POWER,
     CONF_FORECAST_SOLAR,
     CONF_HEATPUMP_HEAT,
     CONF_HEATPUMP_POWER,
@@ -34,6 +42,7 @@ from .const import (
     CONF_THERMOSTAT,
     CONF_WEATHER,
     DEFAULT_ACTIVE_MONTHS,
+    DEFAULT_BOOST_DRAW_W,
     DEFAULTS,
     DOMAIN,
     RULE_DESCRIPTIONS,
@@ -100,6 +109,16 @@ class SmartHeatpumpCoordinator:
         self._boost_activated_at: float | None = None  # monotonic timestamp
         self._cancel_timer: CALLBACK_TYPE | None = None
         self._listeners: list[callback] = []
+
+        # One evaluation at a time — the battery watch can start one between timer runs
+        self._eval_lock = asyncio.Lock()
+
+        # Home battery — the priority switch pushes updates here
+        self.heatpump_first: bool = False
+        self._battery_watch = DischargeWatch()
+        self._battery_check: CALLBACK_TYPE | None = None
+        self._battery_eval_pending: bool = False
+        self._battery_reset_at: float | None = None  # UTC timestamp
 
         # Dry run — switch entity pushes updates here
         self.dry_run_enabled: bool = not self._opt(CONF_THERMOSTAT)
@@ -183,6 +202,43 @@ class SmartHeatpumpCoordinator:
         return entity if entity else None
 
     @property
+    def battery_power_entity(self) -> str | None:
+        """Get the home battery power entity from options."""
+        entity = self._opt(CONF_BATTERY_POWER)
+        return entity if entity else None
+
+    @property
+    def battery_positive_discharge(self) -> bool:
+        """Whether the battery sensor reads positive while discharging."""
+        return self._opt(CONF_BATTERY_POSITIVE, "discharging") != "charging"
+
+    @property
+    def boost_draw_w(self) -> float:
+        """Heat pump draw expected during a boost: set by hand, learned, or a default."""
+        manual = self.config_values.get("heatpump_boost_draw", 0.0)
+        if manual > 0:
+            return manual
+        learned = self.solar_energy.boost_draw_w
+        return learned if learned is not None else DEFAULT_BOOST_DRAW_W
+
+    @property
+    def battery_cooldown_until(self) -> datetime | None:
+        """End of the cooldown after a battery reset, or None when not cooling down."""
+        if self._battery_reset_at is None:
+            return None
+        until = self._battery_reset_at + self.config_values.get("battery_cooldown_minutes", 0.0) * 60
+        if until <= dt_util.utcnow().timestamp():
+            return None
+        return datetime.fromtimestamp(until, timezone.utc)
+
+    def read_battery_discharge_w(self) -> float | None:
+        """Battery power now, discharge positive (W), or None without a usable reading."""
+        value = self._read_power_w(self.battery_power_entity or "")
+        if value is None:
+            return None
+        return to_discharge_w(value, self.battery_positive_discharge)
+
+    @property
     def notify_targets(self) -> list[str]:
         """Get notification targets from options."""
         raw = self._opt(CONF_NOTIFY_TARGETS)
@@ -200,6 +256,7 @@ class SmartHeatpumpCoordinator:
         self._recover_boost_state()
 
         self._start_energy_tracking()
+        self._start_battery_watch()
 
         # First evaluation after a short delay to let entities restore
         self._cancel_timer = async_call_later(
@@ -234,6 +291,9 @@ class SmartHeatpumpCoordinator:
         if self._cancel_timer:
             self._cancel_timer()
             self._cancel_timer = None
+        if self._battery_check:
+            self._battery_check()
+            self._battery_check = None
         for unsub in self._energy_unsubs:
             unsub()
         self._energy_unsubs.clear()
@@ -242,7 +302,8 @@ class SmartHeatpumpCoordinator:
     async def _async_evaluate_callback(self, _now: Any = None) -> None:
         """Timer callback — wraps evaluate with error recovery."""
         try:
-            await self.async_evaluate()
+            async with self._eval_lock:
+                await self.async_evaluate()
         except Exception:
             _LOGGER.exception("Unhandled exception in evaluation")
             await self._async_safe_fallback()
@@ -272,6 +333,17 @@ class SmartHeatpumpCoordinator:
         solar_export = max(0.0, -net_power) if net_power is not None else None
         grid_import = max(0.0, net_power) if net_power is not None else None
         forecast_solar = self._read_forecast_solar()
+
+        # Home battery: discharge positive, None when unavailable
+        has_battery = bool(self.battery_power_entity)
+        battery_now = self.read_battery_discharge_w() if has_battery else None
+        now_ts = dt_util.utcnow().timestamp()
+        battery_discharging = False
+        if has_battery:
+            self._battery_watch.update(now_ts, battery_now, cfg.get("battery_discharge_limit", 50.0))
+            battery_discharging = self._solar_boost_active and self._battery_watch.sustained(
+                now_ts, cfg.get("battery_reaction_minutes", 2.0) * 60
+            )
 
         # Store snapshots for notification / sensor attributes
         self._last_net_power = net_power
@@ -316,7 +388,8 @@ class SmartHeatpumpCoordinator:
         if forecast_temps:
             avg_forecast_temp = sum(forecast_temps) / len(forecast_temps)
             self._last_avg_forecast_temp = round(avg_forecast_temp, 1)
-            if avg_forecast_temp >= forecast_skip_threshold:
+            # A boost running on the battery is still reset on a warm forecast
+            if avg_forecast_temp >= forecast_skip_threshold and not battery_discharging:
                 _LOGGER.info(
                     "Skipping solar boost — 24h forecast avg %.1f°C >= threshold %.1f°C",
                     avg_forecast_temp,
@@ -342,6 +415,35 @@ class SmartHeatpumpCoordinator:
             self._notify_listeners()
             return
         avg_export_5min, avg_import_5min, avg_net_5min = p1_averages
+        current_export = solar_export or 0.0
+
+        # ---- Home battery: decide on the grid power without the battery ----
+        boost_start_export = 0.0
+        battery_cooldown = False
+        if has_battery:
+            battery_avgs = await self._async_read_battery_averages()
+            if battery_avgs is None or battery_now is None:
+                if not self._solar_boost_active:
+                    # Can't tell whether a boost would run on the battery — don't start one
+                    _LOGGER.info("Battery sensor unavailable — no new boost")
+                    self.active_rule = "battery_unavailable"
+                    self._notify_listeners()
+                    return
+                battery_avgs = (0.0, 0.0)
+            avg_discharge, avg_charge = battery_avgs
+            eff_avg = effective_net_w(avg_net_5min, avg_discharge, avg_charge, self.heatpump_first)
+            avg_export_5min, avg_import_5min = max(0.0, -eff_avg), max(0.0, eff_avg)
+            if net_power is not None and battery_now is not None:
+                eff_now = effective_net_w(
+                    net_power, max(0.0, battery_now), max(0.0, -battery_now), self.heatpump_first
+                )
+                current_export = max(0.0, -eff_now)
+            boost_start_export = self.boost_draw_w
+            battery_cooldown = self.battery_cooldown_until is not None
+            _LOGGER.debug(
+                "Battery 5-min avg: discharge=%.0fW charge=%.0fW | effective export=%.0fW import=%.0fW",
+                avg_discharge, avg_charge, avg_export_5min, avg_import_5min,
+            )
         self._last_avg_import_5min = avg_import_5min
 
         # ---- Read current setpoint ----
@@ -382,7 +484,10 @@ class SmartHeatpumpCoordinator:
             boost_active_seconds=boost_active_seconds,
             min_boost_minutes=cfg.get("solar_min_boost_minutes", 0.0),
             max_boost_temp=cfg.get("solar_max_boost_temp", 25.0),
-            current_export_w=solar_export or 0.0,
+            current_export_w=current_export,
+            boost_start_export_w=boost_start_export,
+            battery_discharging=battery_discharging,
+            battery_cooldown=battery_cooldown,
         )
 
         prev_boost_active = self._solar_boost_active
@@ -396,6 +501,10 @@ class SmartHeatpumpCoordinator:
                 self.solar_energy.count(today, "boosts")
             if rule == "solar_reset":
                 self.solar_energy.count(today, "resets")
+            if rule == "solar_reset_battery":
+                self.solar_energy.count(today, "battery_resets")
+        if rule == "solar_reset_battery":
+            self._battery_reset_at = now_ts
 
         # Track when boost was activated
         if new_boost_active and not prev_boost_active:
@@ -409,6 +518,7 @@ class SmartHeatpumpCoordinator:
             "solar_incremental",
             "solar_step_down",
             "solar_reset",
+            "solar_reset_battery",
             "solar_boost_deactivated",
             "solar_min_run",
         }
@@ -436,6 +546,7 @@ class SmartHeatpumpCoordinator:
                     indoor_temp=indoor_temp,
                     net_power=net_power,
                     avg_import_5min=avg_net_5min,
+                    battery_w=battery_now,
                 )
         else:
             setpoint_changed = is_actionable and (
@@ -459,6 +570,7 @@ class SmartHeatpumpCoordinator:
                     indoor_temp=indoor_temp,
                     net_power=net_power,
                     avg_import_5min=avg_net_5min,
+                    battery_w=battery_now,
                 )
             else:
                 _LOGGER.debug(
@@ -498,6 +610,8 @@ class SmartHeatpumpCoordinator:
             entities.append(self.heatpump_power_entity)
         if self.heatpump_heat_entity:
             entities.append(self.heatpump_heat_entity)
+        if self.battery_power_entity:
+            entities.append(self.battery_power_entity)
 
         @callback
         def _on_state_change(_event: Any) -> None:
@@ -538,11 +652,102 @@ class SmartHeatpumpCoordinator:
             boost_active=boost,
             value_eur_per_kwh=cfg.get("price_import", 0.0) - cfg.get("price_export", 0.0),
             heat_w=self._read_power_w(self.heatpump_heat_entity or ""),
+            discharge_w=self.read_battery_discharge_w() if self.battery_power_entity else None,
         )
         if added:
             self._energy_store.async_delay_save(
                 self.solar_energy.to_dict, _ENERGY_SAVE_DELAY_S
             )
+
+    # ------------------------------------------------------------------
+    # Home battery watch — a boost must never run on battery power
+    # ------------------------------------------------------------------
+
+    @callback
+    def _start_battery_watch(self) -> None:
+        """Check the battery on every reading instead of waiting for the next evaluation."""
+        if not self.battery_power_entity:
+            return
+
+        @callback
+        def _on_state_change(_event: Any) -> None:
+            self._check_battery()
+
+        self._energy_unsubs.append(
+            async_track_state_change_event(
+                self.hass, [self.battery_power_entity], _on_state_change
+            )
+        )
+
+    @callback
+    def _check_battery(self, _now: Any = None) -> None:
+        """Evaluate at once when the battery has discharged during a boost for the reaction time."""
+        if _now is not None:
+            self._battery_check = None  # the scheduled check is firing
+        cfg = self.config_values
+        now = dt_util.utcnow().timestamp()
+        reaction_s = cfg.get("battery_reaction_minutes", 2.0) * 60
+        self._battery_watch.update(
+            now, self.read_battery_discharge_w(), cfg.get("battery_discharge_limit", 50.0)
+        )
+        due = self._battery_watch.due_at(reaction_s)
+        if not self._solar_boost_active or due is None:
+            if self._battery_check:
+                self._battery_check()
+                self._battery_check = None
+            return
+        if due > now:
+            # The sensor may not report again while its value holds — check when due
+            if self._battery_check is None:
+                self._battery_check = async_call_later(
+                    self.hass, due - now + 1, self._check_battery
+                )
+            return
+        if not self._battery_eval_pending:
+            self._battery_eval_pending = True
+            self.hass.async_create_task(self._async_battery_evaluate())
+
+    async def _async_battery_evaluate(self) -> None:
+        """Extra evaluation between timer runs; the timer keeps its own schedule."""
+        try:
+            async with self._eval_lock:
+                # The timer run may have ended the boost while we waited
+                if self._solar_boost_active:
+                    _LOGGER.info("Battery discharging during boost — evaluating now")
+                    await self.async_evaluate()
+        except Exception:
+            _LOGGER.exception("Unhandled exception in battery-triggered evaluation")
+            await self._async_safe_fallback()
+        finally:
+            self._battery_eval_pending = False
+
+    async def _async_read_battery_averages(self) -> tuple[float, float] | None:
+        """Time-weighted 5-min averages of battery (discharge, charge) in W, or None without data."""
+        entity_id = self.battery_power_entity
+        if not entity_id:
+            return None
+        now = dt_util.utcnow()
+        start_time = now - timedelta(minutes=_AVG_WINDOW_MINUTES)
+        states = await self._async_history(entity_id, start_time, now, include_start=True)
+        if states is None:
+            return None
+        current = self.hass.states.get(entity_id)
+        scale = 1000.0 if current and current.attributes.get("unit_of_measurement") == "kW" else 1.0
+        samples: list[tuple[float, float]] = []
+        for state in states:
+            try:
+                value = float(state.state) * scale
+            except (TypeError, ValueError):
+                continue
+            samples.append(
+                (state.last_changed.timestamp(), to_discharge_w(value, self.battery_positive_discharge))
+            )
+        start, end = start_time.timestamp(), now.timestamp()
+        discharge = time_weighted_mean(samples, start, end, lambda v: max(0.0, v))
+        charge = time_weighted_mean(samples, start, end, lambda v: max(0.0, -v))
+        if discharge is None or charge is None:
+            return None
+        return discharge, charge
 
     def _read_power_w(self, entity_id: str) -> float | None:
         """Read a power sensor in watts (converts kW), without logging noise."""
@@ -612,26 +817,9 @@ class SmartHeatpumpCoordinator:
         now = dt_util.utcnow()
         start_time = now - timedelta(minutes=_AVG_WINDOW_MINUTES)
 
-        try:
-            from homeassistant.components.recorder import get_instance
-            from homeassistant.components.recorder.history import state_changes_during_period
-
-            history = await get_instance(self.hass).async_add_executor_job(
-                state_changes_during_period,
-                self.hass,
-                start_time,
-                now,
-                entity_id,
-                True,   # no_attributes — we only need the state value
-                False,  # descending
-                None,   # limit
-                False,  # include_start_time_state
-            )
-        except Exception:
-            _LOGGER.warning("Failed to query P1 history for '%s'", entity_id)
+        states = await self._async_history(entity_id, start_time, now, include_start=False)
+        if states is None:
             return None
-
-        states = history.get(entity_id, [])
         readings: list[float] = []
         for state in states:
             if state.state in ("unavailable", "unknown", ""):
@@ -658,6 +846,33 @@ class SmartHeatpumpCoordinator:
             len(readings), avg_net, avg_export, avg_import,
         )
         return avg_export, avg_import, avg_net
+
+    async def _async_history(
+        self, entity_id: str, start_time: datetime, end_time: datetime, include_start: bool
+    ) -> list[Any] | None:
+        """Recorder states of one entity (unavailable ones dropped), or None if the query fails."""
+        try:
+            from homeassistant.components.recorder import get_instance
+            from homeassistant.components.recorder.history import state_changes_during_period
+
+            history = await get_instance(self.hass).async_add_executor_job(
+                state_changes_during_period,
+                self.hass,
+                start_time,
+                end_time,
+                entity_id,
+                True,   # no_attributes — we only need the state value
+                False,  # descending
+                None,   # limit
+                include_start,  # include_start_time_state
+            )
+        except Exception:
+            _LOGGER.warning("Failed to query history for '%s'", entity_id)
+            return None
+        return [
+            s for s in history.get(entity_id, [])
+            if s.state not in ("unavailable", "unknown", "")
+        ]
 
     def _read_outdoor_temp(self) -> float | None:
         """Read outdoor temperature from the weather entity."""
@@ -808,6 +1023,7 @@ class SmartHeatpumpCoordinator:
         indoor_temp: float | None,
         net_power: float | None,
         avg_import_5min: float,
+        battery_w: float | None = None,
     ) -> None:
         """Send enriched notification on setpoint change."""
         _LOGGER.warning(
@@ -838,6 +1054,7 @@ class SmartHeatpumpCoordinator:
             config=cfg,
             forecast_avg_24h=self._last_avg_forecast_temp,
             version=_VERSION,
+            battery_w=battery_w,
         )
 
         _LOGGER.warning("Sending notification to targets: %s | message_len=%d", targets, len(message))

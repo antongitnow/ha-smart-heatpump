@@ -34,7 +34,9 @@
           "notify_targets": "Notification targets",
           "active_months": "Active months",
           "heatpump_power_entity": "Heat pump power sensor (W)",
-          "heatpump_heat_entity": "Heat pump heat output sensor (W)"
+          "heatpump_heat_entity": "Heat pump heat output sensor (W)",
+          "battery_power_entity": "Home battery power sensor (W)",
+          "battery_power_positive": "Battery sensor is positive when"
         },
         "data_description": {
           "thermostat_entity": "The climate entity that controls your heat pump. Leave empty for dry run mode.",
@@ -45,12 +47,22 @@
           "notify_targets": "Comma-separated notify service names without the 'notify.' prefix. Example: mobile_app_my_phone, telegram",
           "active_months": "Select the months when the controller should be active.",
           "heatpump_power_entity": "Optional. Electrical power of the heat pump (W or kW). Enables the solar energy sensors: kWh the heat pump used on solar surplus during a boost.",
-          "heatpump_heat_entity": "Optional. Heat the heat pump delivers to the house (W or kW), e.g. Quatt's CIC Total power. Enables the heat-on-solar sensors: kWh of heat produced from solar during a boost. Needs the heat pump power sensor."
+          "heatpump_heat_entity": "Optional. Heat the heat pump delivers to the house (W or kW), e.g. Quatt's CIC Total power. Enables the heat-on-solar sensors: kWh of heat produced from solar during a boost. Needs the heat pump power sensor.",
+          "battery_power_entity": "Optional. Power flowing in or out of your home battery (W or kW), e.g. a Zendure SolarFlow's Battery Power. A boost then never runs on battery power: battery discharge counts as import and ends a boost at once.",
+          "battery_power_positive": "Whether the battery sensor reads positive while the battery discharges (delivers power) or while it charges."
         }
       }
     },
     "error": {
       "entity_not_found": "Entity not found. Check that it exists in Developer Tools → States."
+    }
+  },
+  "selector": {
+    "battery_power_positive": {
+      "options": {
+        "discharging": "Discharging",
+        "charging": "Charging"
+      }
     }
   },
   "entity": {
@@ -67,7 +79,11 @@
       "forecast_temp_skip_threshold": { "name": "Forecast skip threshold" },
       "solar_max_boost_temp": { "name": "Maximum boost temperature" },
       "price_import": { "name": "Electricity price" },
-      "price_export": { "name": "Feed-in compensation" }
+      "price_export": { "name": "Feed-in compensation" },
+      "battery_discharge_limit": { "name": "Battery discharge limit" },
+      "battery_reaction_minutes": { "name": "Battery reaction time" },
+      "battery_cooldown_minutes": { "name": "Cooldown after battery reset" },
+      "heatpump_boost_draw": { "name": "Heat pump boost draw" }
     },
     "sensor": {
       "active_rule": { "name": "Active rule" },
@@ -82,11 +98,13 @@
       "heatpump_grid_boost_today": { "name": "Heat pump grid import while boosting today" },
       "export_unused_today": { "name": "Export not used today" },
       "heat_solar_today": { "name": "Heat from solar today" },
-      "heat_solar_total": { "name": "Heat from solar" }
+      "heat_solar_total": { "name": "Heat from solar" },
+      "battery_resets_today": { "name": "Battery resets today" }
     },
     "switch": {
       "notifications_enabled": { "name": "Notifications" },
-      "dry_run": { "name": "Dry run" }
+      "dry_run": { "name": "Dry run" },
+      "heatpump_first": { "name": "Solar to heat pump before battery" }
     }
   }
 }

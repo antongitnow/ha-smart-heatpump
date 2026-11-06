@@ -6,6 +6,8 @@ This module implements the solar-incremental thermostat control:
   - During heating season, when solar surplus is detected, boost setpoint
     incrementally above current room temperature.
   - When import rises, step down or reset.
+  - With a home battery, reset at once when the battery discharges during a
+    boost, and wait a cooldown before the next one.
   - Thermal model ML learning continues independently (handled by coordinator).
 
 Safety floor: setpoint is always >= temp_ideal (never goes below comfort).
@@ -42,6 +44,9 @@ def decide_solar(
     min_boost_minutes: float = 0.0,
     max_boost_temp: float = 25.0,
     current_export_w: float = 0.0,
+    boost_start_export_w: float = 0.0,
+    battery_discharging: bool = False,
+    battery_cooldown: bool = False,
 ) -> tuple[float, str, bool]:
     """Decide the target thermostat setpoint for the solar incremental flow.
 
@@ -62,6 +67,13 @@ def decide_solar(
         min_boost_minutes: Minimum boost duration before step-down/reset allowed.
         max_boost_temp: Absolute ceiling for boosted setpoint (°C).
         current_export_w: Instantaneous export in Watts (>=0); blocks step-down.
+        boost_start_export_w: Extra minimum export (W) to start a boost — with a
+            home battery, the heat pump's boost draw, so the battery doesn't
+            have to cover it.  The higher of this and the surplus threshold applies.
+        battery_discharging: The home battery has discharged above its limit for
+            the reaction time.  Ends a running boost at once, even during the
+            minimum boost duration.
+        battery_cooldown: A battery reset happened recently — no new boost yet.
 
     Returns:
         (target_setpoint, rule_name, new_solar_boost_active)
@@ -76,8 +88,14 @@ def decide_solar(
 
     # Branch: solar boost is NOT currently active
     if not solar_boost_active:
+        if battery_cooldown:
+            return (
+                current_setpoint if current_setpoint is not None else temp_ideal,
+                "solar_battery_cooldown",
+                False,
+            )
         # Check 5-min average export
-        if avg_export_5min_w > solar_surplus_threshold:
+        if avg_export_5min_w > max(solar_surplus_threshold, boost_start_export_w):
             # Activate solar boost
             if current_temperature is not None:
                 target = current_temperature + solar_step_delta
@@ -97,6 +115,10 @@ def decide_solar(
             )
 
     # Branch: solar boost IS currently active
+    # A boost never runs on battery power — this overrides the minimum run time
+    if battery_discharging:
+        return temp_ideal, "solar_reset_battery", False
+
     # Minimum run time protection — keep boost active and setpoint ahead of room temp
     in_min_run = min_boost_minutes > 0 and boost_active_seconds < min_boost_minutes * 60
     if in_min_run:

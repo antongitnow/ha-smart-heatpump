@@ -8,7 +8,8 @@
  * Served and auto-loaded by the integration (see __init__.async_setup).
  * Dashboard YAML:  type: custom:smart-heatpump-card
  *
- * decideSolar() mirrors decision.decide_solar() — keep the two in sync;
+ * decideSolar() mirrors decision.decide_solar(), and timeMean() and
+ * dischargeSustainedWithin() mirror battery.py — keep them in sync;
  * tests/test_card_replay.py checks them against each other.
  */
 
@@ -27,6 +28,9 @@ const NUMBER_KEYS = {
   solar_min_boost_minutes: "minBoost",
   solar_max_boost_temp: "maxBoost",
   evaluation_interval_min: "interval",
+  battery_discharge_limit: "batLimit",
+  battery_reaction_minutes: "batReact",
+  battery_cooldown_minutes: "batCool",
 };
 // Measured daily figures (sensor translation_key → card name)
 const STAT_KEYS = {
@@ -38,9 +42,11 @@ const STAT_KEYS = {
   export_unused_today: "unused",
   boosts_today: "boosts",
   resets_today: "resets",
+  battery_resets_today: "batResets",
 };
 const DEFAULTS = {
   ideal: 21, S: 300, L: 300, H: 700, step: 0.5, minBoost: 20, maxBoost: 25, interval: 5,
+  batLimit: 50, batReact: 2, batCool: 30,
 };
 const THRESHOLDS = [
   { key: "S", label: "Surplus", sign: -1, color: "var(--shp-surplus)", hint: "Export needed to start or raise a boost" },
@@ -59,18 +65,22 @@ export function decideSolar(i) {
   const {
     active, avgExport, avgImport, temp = null, setpoint = null, ideal,
     S, L, H, step, boostSeconds = 0, minBoostMin = 0, maxBoost = 25, exportNow = 0,
+    startExport = 0, batteryDischarging = false, batteryCooldown = false,
   } = i;
   const hold = setpoint !== null ? setpoint : ideal;
   const clamp = (t) => snapHalf(Math.min(Math.max(t, ideal), maxBoost));
 
   if (!active) {
-    if (avgExport > S) {
+    if (batteryCooldown) return [hold, "solar_battery_cooldown", false];
+    if (avgExport > Math.max(S, startExport)) {
       let t = temp !== null ? temp + step : ideal + step;
       if (setpoint !== null) t = Math.max(t, setpoint);
       return [clamp(t), "solar_incremental", true];
     }
     return [hold, "no_solar_action", false];
   }
+
+  if (batteryDischarging) return [ideal, "solar_reset_battery", false];
 
   if (minBoostMin > 0 && boostSeconds < minBoostMin * 60) {
     let t;
@@ -126,28 +136,56 @@ function firstAfter(arr, t) {
   return lo;
 }
 
-// Time-weighted mean of a sensor over (a, b] — each reading holds until the
+// Time-weighted mean of f(value) over (a, b] — each reading holds until the
 // next. Returns null when the sensor has no reading by b.
-function timeMean(series, a, b) {
+// Mirrors battery.time_weighted_mean().
+export function timeMean(series, a, b, f = (v) => v) {
   let i = firstAfter(series, a) - 1;
   if (i < 0) {
     if (!series.length || series[0][0] > b) return null;
     i = 0;
     a = series[0][0];
   }
-  let sum = 0, t = a, v = series[i][1];
+  let sum = 0, t = a, v = f(series[i][1]);
   for (let j = i + 1; j < series.length && series[j][0] <= b; j++) {
     sum += v * (series[j][0] - t);
     t = series[j][0];
-    v = series[j][1];
+    v = f(series[j][1]);
   }
   sum += v * (b - t);
   return b > a ? sum / (b - a) : v;
 }
 
+// True if, at some moment in (a, b], battery discharge (positive W) had
+// stayed above limit for react ms. Mirrors battery.discharge_sustained_within().
+export function dischargeSustainedWithin(series, a, b, limit, react) {
+  let runStart = null;
+  for (let k = 0; k < series.length; k++) {
+    const [t, w] = series[k];
+    if (t > b) break;
+    const until = k + 1 < series.length ? series[k + 1][0] : b;
+    if (w > limit) {
+      if (runStart === null) runStart = t;
+      const end = Math.min(until, b);
+      if (runStart + react <= end && end > a) return true;
+    } else {
+      runStart = null;
+    }
+  }
+  return false;
+}
+
+const pos = (v) => Math.max(0, v);
+const neg = (v) => Math.max(0, -v);
+
 // hp (optional): heat pump power [[ms, watts]], used to count only the grid
 // import the heat pump itself caused while boosting.
-export function replay(readings, temps, p, hp = null) {
+// bat (optional): home battery power [[ms, watts]], discharge positive. The
+// decisions then use the grid power without the battery, like the coordinator,
+// with p.hpFirst, p.startExport, p.batLimit, p.batReact and p.batCool.
+// A battery reset the controller makes between evaluations is shown at the
+// next evaluation.
+export function replay(readings, temps, p, hp = null, bat = null) {
   const iv = p.interval * 60000;
   const prefix = [0];
   for (const r of readings) prefix.push(prefix[prefix.length - 1] + r[1]);
@@ -157,33 +195,62 @@ export function replay(readings, temps, p, hp = null) {
   };
 
   const ticks = [];
-  let active = false, sp = null, activatedAt = null;
+  let active = false, sp = null, activatedAt = null, batResetAt = null;
   for (let T = p.start + iv; T <= p.end; T += iv) {
     const bar = mean(T - iv, T);
     const win = mean(T - AVG_WINDOW_MS, T);
+    const base = {
+      t: T,
+      bar: bar.n ? bar.v : null,
+      hp: hp ? timeMean(hp, T - iv, T) : null,
+      bat: bat ? timeMean(bat, T - iv, T) : null,
+      batDis: bat ? timeMean(bat, T - iv, T, pos) : null,
+    };
     if (win.n < MIN_READINGS) {
-      ticks.push({ t: T, bar: bar.n ? bar.v : null, hp: hp ? timeMean(hp, T - iv, T) : null, active, sp: sp ?? p.ideal, rule: "waiting_for_data", temp: null });
+      ticks.push({ ...base, active, sp: sp ?? p.ideal, rule: "waiting_for_data", temp: null });
       continue;
+    }
+    let net = win.v, netNow = win.last;
+    const extra = {};
+    if (bat) {
+      let dis = timeMean(bat, T - AVG_WINDOW_MS, T, pos);
+      let chg = timeMean(bat, T - AVG_WINDOW_MS, T, neg);
+      const bi = firstAfter(bat, T) - 1;
+      let now = bi >= 0 ? bat[bi][1] : null;
+      if (dis === null || now === null) {
+        if (!active) {
+          ticks.push({ ...base, active, sp: sp ?? p.ideal, rule: "battery_unavailable", temp: null });
+          continue;
+        }
+        dis = chg = now = 0;
+      }
+      net += dis - (p.hpFirst ? chg : 0);
+      netNow += pos(now) - (p.hpFirst ? neg(now) : 0);
+      extra.startExport = p.startExport;
+      extra.batteryDischarging = active && dischargeSustainedWithin(bat, T - iv, T, p.batLimit, p.batReact * 60000);
+      extra.batteryCooldown = batResetAt !== null && T - batResetAt < p.batCool * 60000;
     }
     const ti = firstAfter(temps, T) - 1;
     const temp = ti >= 0 ? temps[ti][1] : null;
     const [target, rule, next] = decideSolar({
       active,
-      avgExport: Math.max(0, -win.v),
-      avgImport: Math.max(0, win.v),
+      avgExport: Math.max(0, -net),
+      avgImport: Math.max(0, net),
       temp,
       setpoint: sp,
       ideal: p.ideal, S: p.S, L: p.L, H: p.H, step: p.step,
       boostSeconds: active && activatedAt !== null ? (T - activatedAt) / 1000 : 0,
       minBoostMin: p.minBoost,
       maxBoost: p.maxBoost,
-      exportNow: Math.max(0, -win.last),
+      exportNow: Math.max(0, -netNow),
+      ...extra,
     });
+    if (rule === "solar_reset_battery") batResetAt = T;
     if (next && !active) activatedAt = T;
     else if (!next) activatedAt = null;
     active = next;
     sp = target;
-    ticks.push({ t: T, bar: bar.n ? bar.v : null, hp: hp ? timeMean(hp, T - iv, T) : null, active, sp, rule, temp });
+    ticks.push({ ...base, active, sp, rule, temp });
   }
   return { ticks, stats: summarise(ticks, p.interval, Boolean(hp)) };
 }
@@ -194,7 +261,7 @@ function summarise(ticks, interval, hpKnown) {
   let was = false;
   ticks.forEach((k, i) => {
     if (k.active && !was) s.starts++;
-    if (k.rule === "solar_reset") s.resets++;
+    if (k.rule === "solar_reset" || k.rule === "solar_reset_battery") s.resets++;
     was = k.active;
     if (k.active) s.peak = Math.max(s.peak ?? k.sp, k.sp);
     // The state decided at tick i applies until tick i+1, whose bar covers that span
@@ -202,8 +269,9 @@ function summarise(ticks, interval, hpKnown) {
     if (!next || next.bar === null) return;
     const exp = Math.max(0, -next.bar) * h / 1000;
     // With a heat pump meter, other loads get the solar first and the heat
-    // pump's share of the import is what it drew beyond that: min(import, draw)
-    const gridW = Math.max(0, next.bar);
+    // pump's share of the import is what it drew beyond that: min(import, draw).
+    // Battery discharge counts as import — it isn't solar.
+    const gridW = Math.max(0, next.bar + (next.batDis ?? 0));
     const imp = (hpKnown && next.hp !== null ? Math.min(gridW, Math.max(0, next.hp)) : gridW) * h / 1000;
     if (k.active) {
       s.boostH += h;
@@ -414,6 +482,7 @@ class SmartHeatpumpCard extends HTMLElement {
     const power = this._config.power_entity || attrs.power_entity;
     const tempEntity = this._config.indoor_temp_entity || attrs.indoor_temp_entity;
     const hpEntity = this._config.heatpump_power_entity || attrs.heatpump_power_entity;
+    const batEntity = this._config.battery_power_entity || attrs.battery_power_entity;
     if (!power) {
       this._message("No power sensor known yet. Update the integration, or set `power_entity:` on the card.");
       return;
@@ -423,7 +492,7 @@ class SmartHeatpumpCard extends HTMLElement {
     this._loading = true;
     const iso = (ms) => new Date(ms).toISOString();
     try {
-      const [p, t, h] = await Promise.all([
+      const [p, t, h, b] = await Promise.all([
         this._hass.callWS({
           type: "history/history_during_period",
           start_time: iso(day - AVG_WINDOW_MS),
@@ -455,6 +524,18 @@ class SmartHeatpumpCard extends HTMLElement {
               significant_changes_only: false,
             })
           : Promise.resolve({}),
+        // Starts earlier: a discharge run can begin before the first evaluation
+        batEntity
+          ? this._hass.callWS({
+              type: "history/history_during_period",
+              start_time: iso(day - AVG_WINDOW_MS - 15 * 60000),
+              end_time: iso(end),
+              entity_ids: [batEntity],
+              minimal_response: true,
+              no_attributes: true,
+              significant_changes_only: false,
+            })
+          : Promise.resolve({}),
       ]);
       const readings = this._series(p[power], (s) => s.s);
       const temps = tempEntity
@@ -465,8 +546,15 @@ class SmartHeatpumpCard extends HTMLElement {
         const kw = this._hass.states[hpEntity]?.attributes?.unit_of_measurement === "kW";
         hp = this._series(h[hpEntity], (s) => s.s).map(([ts, v]) => [ts, kw ? v * 1000 : v]);
       }
+      let bat = null;
+      if (batEntity) {
+        // Discharge positive, in W
+        const kw = this._hass.states[batEntity]?.attributes?.unit_of_measurement === "kW";
+        const sign = attrs.battery_positive_discharge === false ? -1 : 1;
+        bat = this._series(b[batEntity], (s) => s.s).map(([ts, v]) => [ts, sign * (kw ? v * 1000 : v)]);
+      }
       if (day !== this._day) return; // user moved on while loading
-      this._data = { day, end, readings, temps, hp };
+      this._data = { day, end, readings, temps, hp, bat };
       this._renderChart();
     } catch (err) {
       this._message(`Couldn't load history: ${esc(err.message || err)}`);
@@ -608,6 +696,7 @@ class SmartHeatpumpCard extends HTMLElement {
       ["Room", deg(a.indoor_temp)],
       ["Thermostat setpoint", deg(sp), low ? `below ideal ${deg(ideal)}` : ""],
       ["Outdoor", deg(a.outdoor_temp)],
+      ...(a.battery_now ? [["Battery now", a.battery_now.replace(/(\d)W$/, "$1 W")]] : []),
     ];
     root.getElementById("live").innerHTML = tiles
       .map(
@@ -654,8 +743,12 @@ class SmartHeatpumpCard extends HTMLElement {
       ["Export not used", kwh("unused"), yday("unused", fmtKwh)],
       [
         "Boosts / resets",
-        num("boosts") === null ? "—" : `${num("boosts")} / ${num("resets") ?? 0}`,
-        st("boosts") ? `yesterday ${st("boosts").attributes.yesterday ?? 0} / ${st("resets")?.attributes.yesterday ?? 0}` : "",
+        // Battery resets count as resets here
+        num("boosts") === null ? "—" : `${num("boosts")} / ${(num("resets") ?? 0) + (num("batResets") ?? 0)}`,
+        st("boosts")
+          ? `yesterday ${st("boosts").attributes.yesterday ?? 0} / ${(st("resets")?.attributes.yesterday ?? 0) + (st("batResets")?.attributes.yesterday ?? 0)}` +
+            (num("batResets") ? ` · ${num("batResets")} by battery today` : "")
+          : "",
       ],
     ];
     el.innerHTML = tiles
@@ -678,7 +771,7 @@ class SmartHeatpumpCard extends HTMLElement {
   _renderChart() {
     const chart = this.shadowRoot.getElementById("chart");
     if (!chart || !this._data) return;
-    const { day, end, readings, temps, hp } = this._data;
+    const { day, end, readings, temps, hp, bat } = this._data;
     if (!readings.length) {
       this._message("No power readings recorded for this day.");
       return;
@@ -686,13 +779,21 @@ class SmartHeatpumpCard extends HTMLElement {
     const saved = this._saved();
     const cur = this._current();
     const base = { start: day, end, ideal: saved.ideal, step: saved.step, minBoost: saved.minBoost, maxBoost: saved.maxBoost, interval: saved.interval };
+    if (bat) {
+      const a = this._hass.states[this._entities.rule]?.attributes || {};
+      Object.assign(base, {
+        hpFirst: Boolean(a.heatpump_first),
+        startExport: Number(a.boost_draw_w) || 0,
+        batLimit: saved.batLimit, batReact: saved.batReact, batCool: saved.batCool,
+      });
+    }
     // Replays are cached: hovering redraws the chart but changes no inputs
-    const key = JSON.stringify([day, end, readings.length, temps.length, saved, cur]);
+    const key = JSON.stringify([day, end, readings.length, temps.length, bat?.length, base, saved, cur]);
     if (this._replayKey !== key) {
       this._replayKey = key;
       this._replays = [
-        replay(readings, temps, { ...base, S: cur.S, L: cur.L, H: cur.H }, hp),
-        replay(readings, temps, { ...base, S: saved.S, L: saved.L, H: saved.H }, hp),
+        replay(readings, temps, { ...base, S: cur.S, L: cur.L, H: cur.H }, hp, bat),
+        replay(readings, temps, { ...base, S: saved.S, L: saved.L, H: saved.H }, hp, bat),
       ];
     }
     const [run, ref] = this._replays;
@@ -815,11 +916,11 @@ class SmartHeatpumpCard extends HTMLElement {
     const focused = this.shadowRoot.activeElement?.dataset?.k;
     chart.innerHTML = `<svg width="${g.W}" height="${g.H}" viewBox="0 0 ${g.W} ${g.H}" role="img" aria-label="Grid power with solar boost thresholds">${pr.join("")}</svg>`;
     if (focused) chart.querySelector(`.handle[data-k="${focused}"]`)?.focus();
-    this._renderKpis(run.stats, ref.stats, cur, saved);
-    this._renderExplain(cur, saved);
+    this._renderKpis(run.stats, ref.stats, cur, saved, Boolean(bat));
+    this._renderExplain(cur, saved, base);
   }
 
-  _renderExplain(cur, saved) {
+  _renderExplain(cur, saved, base) {
     const deg = (v) => `${Number(v).toFixed(1)} °C`;
     const rows = [
       [
@@ -847,14 +948,21 @@ class SmartHeatpumpCard extends HTMLElement {
     const foot =
       `Between the surplus and release-low lines the setpoint holds. ` +
       `For the first ${saved.minBoost} minutes of a boost neither release line applies (minimum boost duration). ` +
-      `Every value is a 5-minute average, so a kettle or a short spike doesn't trigger anything.`;
+      `Every value is a 5-minute average, so a kettle or a short spike doesn't trigger anything.` +
+      (base.batLimit !== undefined
+        ? ` With your home battery the lines apply to the grid power as it would be without the battery: ` +
+          `battery discharge counts as import${base.hpFirst ? " and battery charging as export" : ""}. ` +
+          `A boost needs at least ${Math.round(Math.max(cur.S, base.startExport))} W export to start (the heat pump's boost draw), ` +
+          `ends at once when the battery discharges more than ${base.batLimit} W for ${base.batReact} min, ` +
+          `even in the minimum boost duration, and then waits ${base.batCool} min before the next one.`
+        : "");
     this.shadowRoot.getElementById("ex").innerHTML =
       rows
         .map(([c, h, t]) => `<span class="sw" style="border-color:${c}"></span><div><b>${esc(h)}</b><br>${esc(t)}</div>`)
         .join("") + `<div class="foot">${esc(foot)}</div>`;
   }
 
-  _renderKpis(s, r, cur, saved) {
+  _renderKpis(s, r, cur, saved, hasBat = false) {
     const changed = THRESHOLDS.some((t) => cur[t.key] !== saved[t.key]);
     const delta = (a, b, unit, lowerIsBetter, digits = 1) => {
       const d = Math.round((a - b) * 10 ** digits) / 10 ** digits;
@@ -865,7 +973,13 @@ class SmartHeatpumpCard extends HTMLElement {
     };
     const kpis = [
       ["Export used while boosting", `${s.exportBoost.toFixed(2)} kWh`, delta(s.exportBoost, r.exportBoost, " kWh", false, 2)],
-      [s.hpKnown ? "Heat pump grid import while boosting" : "Grid import while boosting (whole house)", `${s.importBoost.toFixed(2)} kWh`, delta(s.importBoost, r.importBoost, " kWh", true, 2)],
+      [
+        s.hpKnown
+          ? `Heat pump ${hasBat ? "grid and battery" : "grid"} import while boosting`
+          : `${hasBat ? "Grid and battery" : "Grid"} import while boosting (whole house)`,
+        `${s.importBoost.toFixed(2)} kWh`,
+        delta(s.importBoost, r.importBoost, " kWh", true, 2),
+      ],
       ["Boost time", fmtHM(s.boostH * 60), delta(s.boostH * 60, r.boostH * 60, " min", false, 0)],
       ["Export not used", `${s.exportUnused.toFixed(2)} kWh`, delta(s.exportUnused, r.exportUnused, " kWh", true, 2)],
       ["Boosts / resets", `${s.starts} / ${s.resets}`, delta(s.starts + s.resets, r.starts + r.resets, "", true, 0)],
@@ -957,6 +1071,9 @@ class SmartHeatpumpCard extends HTMLElement {
     } else {
       let power = k.bar === null ? "no data" : `${k.bar < 0 ? "export" : "import"} ${fmtW(k.bar)}`;
       if (k.hp !== null && k.hp !== undefined) power += ` · heat pump ${fmtW(k.hp)}`;
+      if (k.bat !== null && k.bat !== undefined && Math.abs(k.bat) >= 1) {
+        power += ` · battery ${k.bat > 0 ? "discharging" : "charging"} ${fmtW(k.bat)}`;
+      }
       const rule = k.rule.replace(/_/g, " ");
       el.textContent = `${hhmm(k.t - this._geom.iv)}–${hhmm(k.t)} · ${power} · ${rule} · setpoint ${k.sp.toFixed(1)} °C`;
     }
