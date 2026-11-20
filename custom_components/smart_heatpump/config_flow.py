@@ -18,6 +18,7 @@ from .const import (
     CONF_ACTIVE_MONTHS,
     CONF_BATTERY_POSITIVE,
     CONF_BATTERY_POWER,
+    CONF_BATTERY_SOC,
     CONF_FORECAST_SOLAR,
     CONF_HEATPUMP_HEAT,
     CONF_HEATPUMP_POWER,
@@ -106,6 +107,7 @@ class SmartHeatpumpOptionsFlow(OptionsFlow):
                 CONF_HEATPUMP_POWER,
                 CONF_HEATPUMP_HEAT,
                 CONF_BATTERY_POWER,
+                CONF_BATTERY_SOC,
                 CONF_P1_POWER,
                 CONF_WEATHER,
             ):
@@ -170,6 +172,17 @@ class SmartHeatpumpOptionsFlow(OptionsFlow):
                     selector.EntitySelectorConfig(
                         domain="sensor",
                         device_class="power",
+                    )
+                ),
+                vol.Optional(
+                    CONF_BATTERY_SOC,
+                    description={
+                        "suggested_value": current.get(CONF_BATTERY_SOC, "")
+                    },
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="battery",
                     )
                 ),
                 vol.Required(

@@ -39,6 +39,7 @@ from .const import (
     CONF_ACTIVE_MONTHS,
     CONF_BATTERY_POSITIVE,
     CONF_BATTERY_POWER,
+    CONF_BATTERY_SOC,
     CONF_FORECAST_SOLAR,
     CONF_HEATPUMP_HEAT,
     CONF_HEATPUMP_POWER,
@@ -51,6 +52,7 @@ from .const import (
     DEFAULT_BOOST_DRAW_W,
     DEFAULTS,
     DOMAIN,
+    LOW_BATTERY_MAX_ABOVE_ROOM,
     RULE_DESCRIPTIONS,
 )
 from .decision import decide_solar
@@ -216,6 +218,24 @@ class SmartHeatpumpCoordinator:
         """Get the home battery power entity from options."""
         entity = self._opt(CONF_BATTERY_POWER)
         return entity if entity else None
+
+    @property
+    def battery_soc_entity(self) -> str | None:
+        """Get the home battery level entity from options."""
+        entity = self._opt(CONF_BATTERY_SOC)
+        return entity if entity else None
+
+    def read_battery_soc(self) -> float | None:
+        """Battery level now (%), or None without a sensor or a usable reading."""
+        return self._read_power_w(self.battery_soc_entity or "")
+
+    @property
+    def battery_low(self) -> bool:
+        """Battery below the full-boost level; an unreadable level counts as low."""
+        if not self.battery_soc_entity:
+            return False
+        soc = self.read_battery_soc()
+        return soc is None or soc < self.config_values.get("battery_full_boost_soc", 80.0)
 
     @property
     def battery_positive_discharge(self) -> bool:
@@ -504,6 +524,7 @@ class SmartHeatpumpCoordinator:
             battery_discharging=battery_discharging,
             battery_cooldown=battery_cooldown,
             battery_unavailable=battery_unavailable,
+            max_boost_above_room=LOW_BATTERY_MAX_ABOVE_ROOM if self.battery_low else None,
         )
 
         prev_boost_active = self._solar_boost_active
@@ -535,6 +556,7 @@ class SmartHeatpumpCoordinator:
             "solar_step_down",
             "solar_reset",
             *_BATTERY_RESETS,
+            "solar_battery_cap",
             "solar_boost_deactivated",
             "solar_min_run",
         }

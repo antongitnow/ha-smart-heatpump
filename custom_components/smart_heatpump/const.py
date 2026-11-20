@@ -19,6 +19,7 @@ CONF_HEATPUMP_POWER = "heatpump_power_entity"
 CONF_HEATPUMP_HEAT = "heatpump_heat_entity"
 CONF_BATTERY_POWER = "battery_power_entity"
 CONF_BATTERY_POSITIVE = "battery_power_positive"  # "discharging" or "charging"
+CONF_BATTERY_SOC = "battery_soc_entity"
 CONF_NOTIFY_TARGETS = "notify_targets"
 CONF_ACTIVE_MONTHS = "active_months"
 
@@ -45,10 +46,16 @@ DEFAULTS: dict[str, float] = {
     "battery_reaction_minutes": 2.0,
     "battery_cooldown_minutes": 30.0,
     "heatpump_boost_draw": 0.0,  # 0 = learn from the heat pump power sensor
+    # Below this battery level a boost stays close to room temperature
+    "battery_full_boost_soc": 80.0,
 }
 
 # Heat pump draw assumed during a boost until one has been learned
 DEFAULT_BOOST_DRAW_W = 750.0
+
+# While the battery is below "battery_full_boost_soc", a boost stays at most
+# this far above room temperature (°C)
+LOW_BATTERY_MAX_ABOVE_ROOM = 0.5
 
 # Default active months — Sep through Apr (heating season)
 DEFAULT_ACTIVE_MONTHS: list[str] = [
@@ -96,6 +103,11 @@ BATTERY_NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]]
     ("heatpump_boost_draw", "Heat pump boost draw", 0, 3000, 50, "W", "mdi:heat-pump-outline"),
 ]
 
+# Created only when a battery level sensor is configured
+BATTERY_SOC_NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]] = [
+    ("battery_full_boost_soc", "Battery level for full boost", 0, 100, 5, "%", "mdi:battery-80"),
+]
+
 # ---------------------------------------------------------------------------
 # Human-readable rule descriptions for notifications
 # ---------------------------------------------------------------------------
@@ -110,6 +122,7 @@ RULE_DESCRIPTIONS: dict[str, str] = {
     "solar_reset_battery": "Battery discharging during boost - resetting setpoint to ideal",
     "solar_reset_battery_unavailable": "Battery sensor unavailable during boost - resetting setpoint to ideal",
     "solar_battery_cooldown": "Waiting after a battery reset - no new boost yet",
+    "solar_battery_cap": "Battery below full-boost level - keeping boost near room temperature",
     "battery_unavailable": "Battery sensor unavailable - no new boost",
     "default": "Normal operation",
     "forecast_warm": "Forecast too warm - skipping solar boost",

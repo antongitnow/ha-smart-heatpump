@@ -17,6 +17,7 @@ const DOMAIN = "smart_heatpump";
 const AVG_WINDOW_MS = 5 * 60 * 1000; // coordinator._AVG_WINDOW_MINUTES
 const MIN_READINGS = 3; // coordinator._MIN_READINGS_FOR_AVG
 const HISTORY_DAYS = 10; // recorder default purge_keep_days
+const LOW_BATTERY_MAX_ABOVE_ROOM = 0.5; // const.LOW_BATTERY_MAX_ABOVE_ROOM
 
 // translation_key → name used in the card
 const NUMBER_KEYS = {
@@ -31,6 +32,7 @@ const NUMBER_KEYS = {
   battery_discharge_limit: "batLimit",
   battery_reaction_minutes: "batReact",
   battery_cooldown_minutes: "batCool",
+  battery_full_boost_soc: "fullSoc",
 };
 // Measured daily figures (sensor translation_key → card name)
 const STAT_KEYS = {
@@ -46,7 +48,7 @@ const STAT_KEYS = {
 };
 const DEFAULTS = {
   ideal: 21, S: 300, L: 300, H: 700, step: 0.5, minBoost: 20, maxBoost: 25, interval: 5,
-  batLimit: 50, batReact: 2, batCool: 30,
+  batLimit: 50, batReact: 2, batCool: 30, fullSoc: 80,
 };
 const THRESHOLDS = [
   { key: "S", label: "Surplus", sign: -1, color: "var(--shp-surplus)", hint: "Export needed to start or raise a boost" },
@@ -61,7 +63,17 @@ const THRESHOLDS = [
 
 const snapHalf = (v) => Math.floor(v * 2) / 2;
 
+// maxAboveRoom (optional): cap a running or starting boost at room + this °C
 export function decideSolar(i) {
+  const [target, rule, next] = decideSolarUncapped(i);
+  const { maxAboveRoom = null, temp = null, ideal, maxBoost = 25 } = i;
+  if (maxAboveRoom === null || !next || temp === null) return [target, rule, next];
+  const capped = snapHalf(Math.min(Math.max(Math.min(target, temp + maxAboveRoom), ideal), maxBoost));
+  if (capped >= target) return [target, rule, next];
+  return [capped, rule === "solar_boost_holding" ? "solar_battery_cap" : rule, next];
+}
+
+function decideSolarUncapped(i) {
   const {
     active, avgExport, avgImport, temp = null, setpoint = null, ideal,
     S, L, H, step, boostSeconds = 0, minBoostMin = 0, maxBoost = 25, exportNow = 0,
@@ -185,11 +197,13 @@ const neg = (v) => Math.max(0, -v);
 // bat (optional): home battery power [[ms, watts]], discharge positive. The
 // decisions then use the grid power without the battery, like the coordinator,
 // with p.hpFirst, p.startExport, p.batLimit, p.batReact and p.batCool.
+// soc (optional): battery level [[ms, %]]. Below p.fullSoc (or unknown) a
+// boost stays at most LOW_BATTERY_MAX_ABOVE_ROOM above room temperature.
 // A battery reset the controller makes between evaluations is shown at the
 // next evaluation, and runs without P1 data like the coordinator's. The
 // history has no unavailable readings, so the battery only counts as
 // unavailable before its first reading.
-export function replay(readings, temps, p, hp = null, bat = null) {
+export function replay(readings, temps, p, hp = null, bat = null, soc = null) {
   const iv = p.interval * 60000;
   const prefix = [0];
   for (const r of readings) prefix.push(prefix[prefix.length - 1] + r[1]);
@@ -235,6 +249,11 @@ export function replay(readings, temps, p, hp = null, bat = null) {
     if (bat) {
       net += dis - (p.hpFirst ? chg : 0);
       netNow += pos(now) - (p.hpFirst ? neg(now) : 0);
+    }
+    if (soc) {
+      const si = firstAfter(soc, T) - 1;
+      const low = si < 0 || soc[si][1] < p.fullSoc;
+      extra.maxAboveRoom = low ? LOW_BATTERY_MAX_ABOVE_ROOM : null;
     }
     const ti = firstAfter(temps, T) - 1;
     const temp = ti >= 0 ? temps[ti][1] : null;
@@ -489,6 +508,7 @@ class SmartHeatpumpCard extends HTMLElement {
     const tempEntity = this._config.indoor_temp_entity || attrs.indoor_temp_entity;
     const hpEntity = this._config.heatpump_power_entity || attrs.heatpump_power_entity;
     const batEntity = this._config.battery_power_entity || attrs.battery_power_entity;
+    const socEntity = this._config.battery_soc_entity || attrs.battery_soc_entity;
     if (!power) {
       this._message("No power sensor known yet. Update the integration, or set `power_entity:` on the card.");
       return;
@@ -498,7 +518,7 @@ class SmartHeatpumpCard extends HTMLElement {
     this._loading = true;
     const iso = (ms) => new Date(ms).toISOString();
     try {
-      const [p, t, h, b] = await Promise.all([
+      const [p, t, h, b, c] = await Promise.all([
         this._hass.callWS({
           type: "history/history_during_period",
           start_time: iso(day - AVG_WINDOW_MS),
@@ -542,6 +562,17 @@ class SmartHeatpumpCard extends HTMLElement {
               significant_changes_only: false,
             })
           : Promise.resolve({}),
+        socEntity
+          ? this._hass.callWS({
+              type: "history/history_during_period",
+              start_time: iso(day),
+              end_time: iso(end),
+              entity_ids: [socEntity],
+              minimal_response: true,
+              no_attributes: true,
+              significant_changes_only: false,
+            })
+          : Promise.resolve({}),
       ]);
       const readings = this._series(p[power], (s) => s.s);
       const temps = tempEntity
@@ -559,8 +590,9 @@ class SmartHeatpumpCard extends HTMLElement {
         const sign = attrs.battery_positive_discharge === false ? -1 : 1;
         bat = this._series(b[batEntity], (s) => s.s).map(([ts, v]) => [ts, sign * (kw ? v * 1000 : v)]);
       }
+      const soc = socEntity ? this._series(c[socEntity], (s) => s.s) : null;
       if (day !== this._day) return; // user moved on while loading
-      this._data = { day, end, readings, temps, hp, bat };
+      this._data = { day, end, readings, temps, hp, bat, soc };
       this._renderChart();
     } catch (err) {
       this._message(`Couldn't load history: ${esc(err.message || err)}`);
@@ -702,7 +734,15 @@ class SmartHeatpumpCard extends HTMLElement {
       ["Room", deg(a.indoor_temp)],
       ["Thermostat setpoint", deg(sp), low ? `below ideal ${deg(ideal)}` : ""],
       ["Outdoor", deg(a.outdoor_temp)],
-      ...(a.battery_now ? [["Battery now", a.battery_now.replace(/(\d)W$/, "$1 W")]] : []),
+      ...(a.battery_now || a.battery_soc !== undefined
+        ? [[
+            "Battery now",
+            [a.battery_now?.replace(/(\d)W$/, "$1 W"), a.battery_soc != null ? `${Math.round(a.battery_soc)} %` : null]
+              .filter(Boolean)
+              .join(" · ") || "—",
+            a.battery_low ? `below ${this._saved().fullSoc} %: boost capped` : "",
+          ]]
+        : []),
     ];
     root.getElementById("live").innerHTML = tiles
       .map(
@@ -777,7 +817,7 @@ class SmartHeatpumpCard extends HTMLElement {
   _renderChart() {
     const chart = this.shadowRoot.getElementById("chart");
     if (!chart || !this._data) return;
-    const { day, end, readings, temps, hp, bat } = this._data;
+    const { day, end, readings, temps, hp, bat, soc } = this._data;
     if (!readings.length) {
       this._message("No power readings recorded for this day.");
       return;
@@ -785,6 +825,7 @@ class SmartHeatpumpCard extends HTMLElement {
     const saved = this._saved();
     const cur = this._current();
     const base = { start: day, end, ideal: saved.ideal, step: saved.step, minBoost: saved.minBoost, maxBoost: saved.maxBoost, interval: saved.interval };
+    if (soc) base.fullSoc = saved.fullSoc;
     if (bat) {
       const a = this._hass.states[this._entities.rule]?.attributes || {};
       Object.assign(base, {
@@ -794,12 +835,12 @@ class SmartHeatpumpCard extends HTMLElement {
       });
     }
     // Replays are cached: hovering redraws the chart but changes no inputs
-    const key = JSON.stringify([day, end, readings.length, temps.length, bat?.length, base, saved, cur]);
+    const key = JSON.stringify([day, end, readings.length, temps.length, bat?.length, soc?.length, base, saved, cur]);
     if (this._replayKey !== key) {
       this._replayKey = key;
       this._replays = [
-        replay(readings, temps, { ...base, S: cur.S, L: cur.L, H: cur.H }, hp, bat),
-        replay(readings, temps, { ...base, S: saved.S, L: saved.L, H: saved.H }, hp, bat),
+        replay(readings, temps, { ...base, S: cur.S, L: cur.L, H: cur.H }, hp, bat, soc),
+        replay(readings, temps, { ...base, S: saved.S, L: saved.L, H: saved.H }, hp, bat, soc),
       ];
     }
     const [run, ref] = this._replays;
@@ -961,6 +1002,9 @@ class SmartHeatpumpCard extends HTMLElement {
           `A boost needs at least ${Math.round(Math.max(cur.S, base.startExport))} W export to start (the heat pump's boost draw), ` +
           `ends at once when the battery discharges more than ${base.batLimit} W for ${base.batReact} min, ` +
           `even in the minimum boost duration, and then waits ${base.batCool} min before the next one.`
+        : "") +
+      (base.fullSoc !== undefined
+        ? ` While the battery is below ${base.fullSoc} %, a boost stays at most ${LOW_BATTERY_MAX_ABOVE_ROOM} °C above room temperature.`
         : "");
     this.shadowRoot.getElementById("ex").innerHTML =
       rows

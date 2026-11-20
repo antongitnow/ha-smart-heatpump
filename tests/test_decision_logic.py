@@ -909,3 +909,57 @@ class TestBatteryUnavailable:
             solar_boost_active=True, battery_discharging=True, battery_unavailable=True
         )
         assert rule == "solar_reset_battery"
+
+
+class TestLowBatteryCap:
+    """Below the full-boost battery level a boost stays at most 0.5 °C above room."""
+
+    def test_start_is_capped(self) -> None:
+        target, rule, boost = _decide(
+            avg_export_5min_w=2000.0, current_temperature=21.2, current_setpoint=21.0,
+            solar_step_delta=1.0, max_boost_above_room=0.5,
+        )
+        assert (target, rule, boost) == (21.5, "solar_incremental", True)
+
+    def test_step_up_stops_at_room_plus_half(self) -> None:
+        target, rule, _ = _decide(
+            solar_boost_active=True, avg_export_5min_w=1500.0,
+            current_temperature=21.0, current_setpoint=21.5, max_boost_above_room=0.5,
+        )
+        assert (target, rule) == (21.5, "solar_incremental")
+
+    def test_lowers_a_higher_setpoint_even_while_exporting(self) -> None:
+        # The battery dropped below the level during a full boost
+        target, rule, boost = _decide(
+            solar_boost_active=True, avg_export_5min_w=100.0, current_export_w=300.0,
+            current_temperature=21.0, current_setpoint=22.0, max_boost_above_room=0.5,
+        )
+        assert (target, rule, boost) == (21.5, "solar_battery_cap", True)
+
+    def test_minimum_run_is_capped(self) -> None:
+        target, rule, _ = _decide(
+            solar_boost_active=True, current_temperature=21.0, current_setpoint=22.0,
+            boost_active_seconds=60, min_boost_minutes=20, max_boost_above_room=0.5,
+        )
+        assert (target, rule) == (21.5, "solar_min_run")
+
+    def test_ideal_stays_the_floor(self) -> None:
+        target, _, _ = _decide(
+            avg_export_5min_w=2000.0, current_temperature=20.0, current_setpoint=21.0,
+            max_boost_above_room=0.5,
+        )
+        assert target == 21.0
+
+    def test_no_cap_without_low_battery(self) -> None:
+        target, _, _ = _decide(
+            solar_boost_active=True, avg_export_5min_w=1500.0,
+            current_temperature=21.0, current_setpoint=21.5,
+        )
+        assert target == 22.0
+
+    def test_resets_are_untouched(self) -> None:
+        target, rule, boost = _decide(
+            solar_boost_active=True, avg_import_5min_w=900.0, current_setpoint=22.0,
+            max_boost_above_room=0.5,
+        )
+        assert (target, rule, boost) == (21.0, "solar_reset", False)

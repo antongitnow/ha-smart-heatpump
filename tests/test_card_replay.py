@@ -78,6 +78,7 @@ def _random_case(rng: random.Random) -> dict:
         "batteryDischarging": rng.random() < 0.2,
         "batteryCooldown": rng.random() < 0.2,
         "batteryUnavailable": rng.random() < 0.2,
+        "maxAboveRoom": rng.choice([None, None, 0.5]),
     }
 
 
@@ -103,6 +104,7 @@ def _python_decide(c: dict) -> list:
         battery_discharging=c["batteryDischarging"],
         battery_cooldown=c["batteryCooldown"],
         battery_unavailable=c["batteryUnavailable"],
+        max_boost_above_room=c["maxAboveRoom"],
     )
     return [target, rule, active]
 
@@ -262,7 +264,7 @@ def test_battery_helpers_match_python():
         assert got[2] == sustained, c
 
 
-def _python_replay_battery(readings: list, temps: list, bat: list, p: dict) -> list:
+def _python_replay_battery(readings: list, temps: list, bat: list, p: dict, soc: list | None = None) -> list:
     """Reference battery replay: the coordinator's semantics at each evaluation."""
     out = []
     active, sp, activated_at, reset_at = False, None, None, None
@@ -292,7 +294,12 @@ def _python_replay_battery(readings: list, temps: list, bat: list, p: dict) -> l
         avg = _battery.effective_net_w(p1_avg, dis, chg, p["hpFirst"])
         net_now = _battery.effective_net_w(p1_now, pos(now), neg(now), p["hpFirst"])
         past_t = [c for (ts, c) in temps if ts <= t]
+        cap = None
+        if soc is not None:
+            levels = [v for (ts, v) in soc if ts <= t]
+            cap = 0.5 if not levels or levels[-1] < p["fullSoc"] else None
         sp, rule, new_active = decide_solar(
+            max_boost_above_room=cap,
             current_month=1,
             solar_boost_active=active,
             avg_export_5min_w=max(0.0, -avg),
@@ -326,11 +333,12 @@ def _python_replay_battery(readings: list, temps: list, bat: list, p: dict) -> l
     return out
 
 
-def _battery_day(seed: int) -> tuple[list, list, list]:
+def _battery_day(seed: int) -> tuple[list, list, list, list]:
     """A day with a battery aiming for zero on the meter, clouds and a heat pump."""
     rng = random.Random(seed)
     readings, bat, temps = [], [], []
     soc, hp, house = 0.3, 0.0, 250.0
+    levels = []
     for ts in range(0, 86400, 10):
         hour = ts / 3600
         sun = max(0.0, 2600 * (1 - abs(hour - 13) / 5)) * (0.2 if rng.random() < 0.2 else 1)
@@ -345,6 +353,8 @@ def _battery_day(seed: int) -> tuple[list, list, list]:
         else:
             battery = 0.0
         soc = min(1.0, max(0.0, soc - battery * 10 / 3600 / 1920))
+        if ts % 300 == 0:
+            levels.append((ts, round(soc * 100)))
         if ts % 30 == 0 and ts >= 3 * 3600:  # battery history starts at 03:00
             bat.append((ts, round(battery)))
         if rng.random() < 0.01:
@@ -352,24 +362,27 @@ def _battery_day(seed: int) -> tuple[list, list, list]:
         readings.append((ts, round(-surplus - battery + rng.uniform(-30, 30))))
     for ts in range(0, 86400, 900):
         temps.append((ts, round(20.8 + 1.2 * max(0.0, 1 - abs(ts / 3600 - 15) / 5), 1)))
-    return readings, temps, bat
+    return readings, temps, bat, levels
 
 
 @pytest.mark.parametrize("hp_first", [False, True])
-def test_battery_replay_matches_coordinator_semantics(hp_first):
-    readings, temps, bat = _battery_day(11)
+@pytest.mark.parametrize("with_soc", [False, True])
+def test_battery_replay_matches_coordinator_semantics(hp_first, with_soc):
+    readings, temps, bat, levels = _battery_day(11)
     params = dict(start=0, end=86400, interval=5, ideal=21.0, S=300.0, L=200.0, H=600.0,
                   step=0.5, minBoost=20.0, maxBoost=24.5, hpFirst=hp_first, startExport=750.0,
-                  batLimit=50.0, batReact=2.0, batCool=30.0)
-    expected = _python_replay_battery(readings, temps, bat, params)
+                  batLimit=50.0, batReact=2.0, batCool=30.0, fullSoc=80.0)
+    soc = levels if with_soc else None
+    expected = _python_replay_battery(readings, temps, bat, params, soc)
     to_ms = lambda series: [[ts * 1000, v] for ts, v in series]  # noqa: E731
     js = _run_node(
-        "const r = card.replay(input.readings, input.temps, input.p, null, input.bat);"
+        "const r = card.replay(input.readings, input.temps, input.p, null, input.bat, input.soc);"
         "console.log(JSON.stringify(r.ticks.map((k) => [k.sp, k.rule, k.active])));",
         {
             "readings": to_ms(readings),
             "temps": to_ms(temps),
             "bat": to_ms(bat),
+            "soc": to_ms(soc) if soc is not None else None,
             "p": {**params, "end": 86400 * 1000},
         },
     )

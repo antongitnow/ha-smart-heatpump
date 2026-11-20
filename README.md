@@ -158,7 +158,7 @@ All parameters appear as slider entities under the **Smart Heatpump Controller**
 | Electricity price | 0.30 | 0–1 | €/kWh | What you pay per kWh from the grid (used for savings) |
 | Feed-in compensation | 0.00 | 0–1 | €/kWh | What an exported kWh earns you (used for savings) |
 
-With a [home battery](#home-battery-optional) four more sliders appear: *Battery discharge limit*, *Battery reaction time*, *Cooldown after battery reset* and *Heat pump boost draw*.
+With a [home battery](#home-battery-optional) four more sliders appear: *Battery discharge limit*, *Battery reaction time*, *Cooldown after battery reset* and *Heat pump boost draw*. With a battery level sensor, also *Battery level for full boost*.
 
 ---
 
@@ -217,7 +217,9 @@ A home battery that aims for zero on the meter (NOM) changes what the P1 meter s
 3. Set **Battery sensor is positive when** to *Discharging* or *Charging*, to match your sensor.
 4. Click **Submit**.
 
-For a **Zendure SolarFlow**, use `Battery Power` (`sensor.solarflow_..._bat_in_out`): positive while discharging. It measures the battery side, so it differs a few percent from what reaches the house, which is close enough here.
+Optionally select the **Home battery level sensor** (%) too, for the [low-battery cap](#low-battery-cap).
+
+For a **Zendure SolarFlow**, use `Battery Power` (`sensor.solarflow_..._bat_in_out`): positive while discharging, and `Battery (SoC)` (`sensor.solarflow_..._electric_level`) as the level. It measures the battery side, so it differs a few percent from what reaches the house, which is close enough here.
 
 The controller only reads the battery and never controls it, so it works next to whatever manages the battery (Zendure's own HEMS, the Zendure Manager, another HEMS). Make sure only one of those steers the battery.
 
@@ -236,6 +238,15 @@ The controller only reads the battery and never controls it, so it works next to
 **Solar to heat pump before battery** (switch, default off):
 - **Off — battery first.** Only real export starts a boost: the battery fills first, and the boost gets what's left over. Once a boost runs, a battery aiming for zero on the meter cuts its charging to cover the heat pump, so in practice the heat pump then gets the surplus first.
 - **On — heat pump first.** Battery charging counts as surplus, so a boost can start on solar the battery would otherwise store.
+
+### Low-battery cap
+
+With a battery level sensor, a boost stays small while the battery is below the **Battery level for full boost** (default 80 %): the setpoint is never more than **0.5 °C above room temperature**. The boost still starts and follows the room as it warms, but doesn't step up further, so more of the surplus goes into the battery. Once the battery reaches the level, the boost steps up as usual, to 1 °C above room temperature.
+
+- If the battery drops below the level during a boost, the setpoint comes down to room + 0.5 °C at the next evaluation (`solar_battery_cap`), even while exporting.
+- An unreadable battery level counts as below the level.
+- Your ideal temperature stays the floor: when the room is colder than ideal − 0.5 °C, the setpoint is the ideal temperature, as without a boost.
+- Set the level to 0 % to switch the cap off.
 
 ### Good to know
 
@@ -315,6 +326,7 @@ end_hour: 20
 # indoor_temp_entity: sensor.living_room_temperature     # override the room temperature source
 # heatpump_power_entity: sensor.heat_pump_power           # override the heat pump power sensor
 # battery_power_entity: sensor.home_battery_power         # override the home battery power sensor
+# battery_soc_entity: sensor.home_battery_level           # override the home battery level sensor
 ```
 
 ---
@@ -337,6 +349,7 @@ The **Active rule** sensor shows the controller's current decision:
 | `solar_reset_battery` | Battery discharging during a boost — resetting setpoint to ideal and deactivating boost |
 | `solar_battery_cooldown` | Waiting after a battery reset — no new boost yet |
 | `battery_unavailable` | Battery sensor unavailable — no new boost |
+| `solar_battery_cap` | Battery below the full-boost level — lowering the boost to room + 0.5 °C |
 | `solar_reset_battery_unavailable` | Battery sensor unavailable during a boost — resetting setpoint to ideal and deactivating boost |
 
 The sensor also exposes these attributes:

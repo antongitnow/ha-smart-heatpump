@@ -149,6 +149,10 @@ class SmartHeatpumpRuleSensor(_BaseSensor):
                 )
             if (until := c.battery_cooldown_until) is not None:
                 attrs["battery_cooldown_until"] = until.isoformat()
+        if c.battery_soc_entity:
+            attrs["battery_soc_entity"] = c.battery_soc_entity
+            attrs["battery_soc"] = c.read_battery_soc()
+            attrs["battery_low"] = c.battery_low
         return attrs
 
 

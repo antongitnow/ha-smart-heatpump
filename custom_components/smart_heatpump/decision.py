@@ -7,13 +7,16 @@ This module implements the solar-incremental thermostat control:
     incrementally above current room temperature.
   - When import rises, step down or reset.
   - With a home battery, reset at once when the battery discharges during a
-    boost, and wait a cooldown before the next one.
+    boost, and wait a cooldown before the next one.  While the battery is
+    low, keep the boost at most a fixed margin above room temperature.
   - Thermal model ML learning continues independently (handled by coordinator).
 
 Safety floor: setpoint is always >= temp_ideal (never goes below comfort).
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 
 def _snap_half(value: float) -> float:
@@ -28,6 +31,38 @@ def is_active_month(month: int, active_months: set[int]) -> bool:
 
 
 def decide_solar(
+    *, max_boost_above_room: float | None = None, **kwargs: Any
+) -> tuple[float, str, bool]:
+    """Decide the target thermostat setpoint for the solar incremental flow.
+
+    Takes the keyword arguments of ``_decide_solar`` (documented there), plus:
+
+        max_boost_above_room: Cap a running or starting boost at room
+            temperature + this many °C (e.g. while the home battery is low,
+            so more surplus goes to the battery), or None for no cap.  The
+            cap may lower the setpoint, even while exporting; the ideal
+            temperature stays the floor.  A hold the cap lowers becomes
+            "solar_battery_cap", so the change is applied.
+
+    Returns:
+        (target_setpoint, rule_name, new_solar_boost_active)
+    """
+    target, rule, active = _decide_solar(**kwargs)
+    room = kwargs.get("current_temperature")
+    if max_boost_above_room is None or not active or room is None:
+        return target, rule, active
+    capped = _snap_half(
+        min(
+            max(min(target, room + max_boost_above_room), kwargs["temp_ideal"]),
+            kwargs.get("max_boost_temp", 25.0),
+        )
+    )
+    if capped >= target:
+        return target, rule, active
+    return capped, "solar_battery_cap" if rule == "solar_boost_holding" else rule, active
+
+
+def _decide_solar(
     current_month: int,
     solar_boost_active: bool,
     avg_export_5min_w: float,
