@@ -433,3 +433,23 @@ def test_battery_reset_runs_without_p1_data():
     # The tick at 35 min has no P1 data in its window, yet resets the boost
     assert rules[6] == "solar_reset_battery"
     assert rules[7:] == ["waiting_for_data"] * 5
+
+
+def test_replay_follows_recorded_ideal_changes() -> None:
+    """A day where the ideal changed replays with the ideal set at each moment."""
+    m = 60_000
+    readings = [[t * m, 200] for t in range(-5, 121)]
+    p = {"start": 0, "end": 120 * m, "ideal": 21, "S": 300, "L": 300, "H": 700,
+         "step": 0.5, "minBoost": 20, "maxBoost": 25, "interval": 5}
+    with_history = _run_node(
+        "const r = card.replay(input.readings, [], input.p);"
+        "console.log(JSON.stringify(r.ticks.map(k => k.sp)));",
+        {"readings": readings, "p": {**p, "ideals": [[0, 20.5], [60 * m, 21]]}},
+    )
+    assert with_history[0] == 20.5 and with_history[-1] == 21
+    without = _run_node(
+        "const r = card.replay(input.readings, [], input.p);"
+        "console.log(JSON.stringify(r.ticks.map(k => k.sp)));",
+        {"readings": readings, "p": p},
+    )
+    assert set(without) == {21}

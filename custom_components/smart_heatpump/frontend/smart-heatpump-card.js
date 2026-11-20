@@ -205,6 +205,13 @@ const neg = (v) => Math.max(0, -v);
 // unavailable before its first reading.
 export function replay(readings, temps, p, hp = null, bat = null, soc = null) {
   const iv = p.interval * 60000;
+  // p.ideals (optional): recorded ideal temperature [[ms, °C]], so a day with
+  // a changed ideal replays with the ideal that was set at each moment
+  const idealAt = (T) => {
+    if (!p.ideals?.length) return p.ideal;
+    const i = firstAfter(p.ideals, T) - 1;
+    return p.ideals[Math.max(0, i)][1];
+  };
   const prefix = [0];
   for (const r of readings) prefix.push(prefix[prefix.length - 1] + r[1]);
   const mean = (a, b) => {
@@ -217,6 +224,7 @@ export function replay(readings, temps, p, hp = null, bat = null, soc = null) {
   for (let T = p.start + iv; T <= p.end; T += iv) {
     const bar = mean(T - iv, T);
     const win = mean(T - AVG_WINDOW_MS, T);
+    const ideal = idealAt(T);
     const base = {
       t: T,
       bar: bar.n ? bar.v : null,
@@ -240,7 +248,7 @@ export function replay(readings, temps, p, hp = null, bat = null, soc = null) {
     }
     const resetDue = active && Boolean(extra.batteryDischarging || extra.batteryUnavailable);
     if (win.n < MIN_READINGS && !resetDue) {
-      ticks.push({ ...base, active, sp: sp ?? p.ideal, rule: "waiting_for_data", temp: null });
+      ticks.push({ ...base, active, sp: active ? (sp ?? ideal) : ideal, rule: "waiting_for_data", temp: null });
       continue;
     }
     // A battery reset doesn't need P1 data
@@ -262,8 +270,9 @@ export function replay(readings, temps, p, hp = null, bat = null, soc = null) {
       avgExport: Math.max(0, -net),
       avgImport: Math.max(0, net),
       temp,
-      setpoint: sp,
-      ideal: p.ideal, S: p.S, L: p.L, H: p.H, step: p.step,
+      // Without a boost the thermostat just follows the ideal temperature
+      setpoint: active ? sp : null,
+      ideal, S: p.S, L: p.L, H: p.H, step: p.step,
       boostSeconds: active && activatedAt !== null ? (T - activatedAt) / 1000 : 0,
       minBoostMin: p.minBoost,
       maxBoost: p.maxBoost,
@@ -518,7 +527,8 @@ class SmartHeatpumpCard extends HTMLElement {
     this._loading = true;
     const iso = (ms) => new Date(ms).toISOString();
     try {
-      const [p, t, h, b, c] = await Promise.all([
+      const idealEntity = this._entities.numbers.ideal;
+      const [p, t, h, b, c, i] = await Promise.all([
         this._hass.callWS({
           type: "history/history_during_period",
           start_time: iso(day - AVG_WINDOW_MS),
@@ -573,6 +583,18 @@ class SmartHeatpumpCard extends HTMLElement {
               significant_changes_only: false,
             })
           : Promise.resolve({}),
+        // The ideal temperature may have been changed during the day
+        idealEntity
+          ? this._hass.callWS({
+              type: "history/history_during_period",
+              start_time: iso(day),
+              end_time: iso(end),
+              entity_ids: [idealEntity],
+              minimal_response: true,
+              no_attributes: true,
+              significant_changes_only: false,
+            })
+          : Promise.resolve({}),
       ]);
       const readings = this._series(p[power], (s) => s.s);
       const temps = tempEntity
@@ -590,9 +612,10 @@ class SmartHeatpumpCard extends HTMLElement {
         const sign = attrs.battery_positive_discharge === false ? -1 : 1;
         bat = this._series(b[batEntity], (s) => s.s).map(([ts, v]) => [ts, sign * (kw ? v * 1000 : v)]);
       }
+      const ideals = idealEntity ? this._series(i[idealEntity], (s) => s.s) : [];
       const soc = socEntity ? this._series(c[socEntity], (s) => s.s) : null;
       if (day !== this._day) return; // user moved on while loading
-      this._data = { day, end, readings, temps, hp, bat, soc };
+      this._data = { day, end, readings, temps, hp, bat, soc, ideals };
       this._renderChart();
     } catch (err) {
       this._message(`Couldn't load history: ${esc(err.message || err)}`);
@@ -817,14 +840,14 @@ class SmartHeatpumpCard extends HTMLElement {
   _renderChart() {
     const chart = this.shadowRoot.getElementById("chart");
     if (!chart || !this._data) return;
-    const { day, end, readings, temps, hp, bat, soc } = this._data;
+    const { day, end, readings, temps, hp, bat, soc, ideals } = this._data;
     if (!readings.length) {
       this._message("No power readings recorded for this day.");
       return;
     }
     const saved = this._saved();
     const cur = this._current();
-    const base = { start: day, end, ideal: saved.ideal, step: saved.step, minBoost: saved.minBoost, maxBoost: saved.maxBoost, interval: saved.interval };
+    const base = { start: day, end, ideal: saved.ideal, step: saved.step, minBoost: saved.minBoost, maxBoost: saved.maxBoost, interval: saved.interval, ideals };
     if (soc) base.fullSoc = saved.fullSoc;
     if (bat) {
       const a = this._hass.states[this._entities.rule]?.attributes || {};
@@ -835,7 +858,7 @@ class SmartHeatpumpCard extends HTMLElement {
       });
     }
     // Replays are cached: hovering redraws the chart but changes no inputs
-    const key = JSON.stringify([day, end, readings.length, temps.length, bat?.length, soc?.length, base, saved, cur]);
+    const key = JSON.stringify([day, end, readings.length, temps.length, ideals.length, bat?.length, soc?.length, base, saved, cur]);
     if (this._replayKey !== key) {
       this._replayKey = key;
       this._replays = [
@@ -903,8 +926,9 @@ class SmartHeatpumpCard extends HTMLElement {
     // setpoint strip
     const tShown = temps.filter((t) => t[0] >= x0 && t[0] <= x1).map((t) => t[1]);
     const spVals = shown.map((k) => k.sp);
-    const sLo = Math.floor(Math.min(saved.ideal, ...tShown, ...spVals) * 2) / 2;
-    const sHi = Math.max(sLo + 1, Math.ceil(Math.max(saved.ideal + 1, ...tShown, ...spVals) * 2) / 2);
+    const idealVals = ideals.length ? ideals.map((x) => x[1]) : [saved.ideal];
+    const sLo = Math.floor(Math.min(...idealVals, ...tShown, ...spVals) * 2) / 2;
+    const sHi = Math.max(sLo + 1, Math.ceil(Math.max(Math.max(...idealVals) + 1, ...tShown, ...spVals) * 2) / 2);
     const SY = (c) => g.stripB - ((c - sLo) / (sHi - sLo)) * g.stripH;
     pr.push(`<line x1="${g.left}" x2="${pR}" y1="${g.stripB}" y2="${g.stripB}" stroke="var(--divider-color)"/>`);
     pr.push(`<text x="${g.left - 6}" y="${SY(sHi) + 9}" font-size="11" text-anchor="end" fill="var(--secondary-text-color)">${sHi}°</text>`);
