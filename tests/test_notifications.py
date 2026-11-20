@@ -236,3 +236,22 @@ class TestBatteryLine:
 
     def test_no_line_without_battery(self) -> None:
         assert "Battery" not in _format()[1]
+
+
+class TestResolveNotifyCall:
+    """Targets may be legacy notify services or notify entity IDs."""
+
+    resolve = staticmethod(_notif_module.resolve_notify_call)
+
+    def test_legacy_service_name(self):
+        assert self.resolve("mobile_app_phone", lambda n: True) == ("mobile_app_phone", {})
+
+    def test_entity_id_uses_send_message(self):
+        entity = "notify.telegram_bot_1_2"
+        assert self.resolve(entity, lambda n: False) == (
+            "send_message",
+            {"entity_id": entity},
+        )
+
+    def test_prefixed_legacy_service_still_works(self):
+        assert self.resolve("notify.telegram", lambda n: n == "telegram") == ("telegram", {})

@@ -6,6 +6,26 @@ Can be unit tested with plain pytest.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+
+def resolve_notify_call(
+    target: str, has_service: Callable[[str], bool]
+) -> tuple[str, dict[str, str]]:
+    """Map a configured target to a (notify service, extra service data) pair.
+
+    Legacy targets are notify service names (``mobile_app_phone``). Newer
+    integrations such as the Telegram bot expose notify *entities*
+    (``notify.telegram_bot_123_456``) that are only reachable through
+    ``notify.send_message``. Accept both, with or without a ``notify.`` prefix.
+    """
+    name = target.removeprefix("notify.")
+    if has_service(name):
+        return name, {}
+    if target.startswith("notify."):
+        return "send_message", {"entity_id": target}
+    return name, {}
+
 
 def format_notification(
     rule: str,

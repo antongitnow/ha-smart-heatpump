@@ -56,7 +56,7 @@ from .const import (
     RULE_DESCRIPTIONS,
 )
 from .decision import decide_solar
-from .notifications import format_notification
+from .notifications import format_notification, resolve_notify_call
 from .solar_energy import SolarEnergyTracker
 from .thermal_model import predict_hours_until_below
 from .thermal_store import ThermalStore
@@ -1103,10 +1103,14 @@ class SmartHeatpumpCoordinator:
         _LOGGER.warning("Sending notification to targets: %s | message_len=%d", targets, len(message))
         for target_name in targets:
             try:
+                service, extra = resolve_notify_call(
+                    target_name,
+                    lambda n: self.hass.services.has_service("notify", n),
+                )
                 await self.hass.services.async_call(
                     "notify",
-                    target_name,
-                    {"title": title, "message": message},
+                    service,
+                    {"title": title, "message": message, **extra},
                     blocking=True,
                 )
                 _LOGGER.warning("Notification SENT OK to '%s' for rule=%s", target_name, rule)

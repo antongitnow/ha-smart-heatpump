@@ -39,7 +39,7 @@
         },
         "data_description": {
           "forecast_solar_entity": "Forecast.Solar sensor for predictive solar boost. Leave empty if not installed.",
-          "notify_targets": "Comma-separated notify service names without the 'notify.' prefix. Example: mobile_app_my_phone, telegram",
+          "notify_targets": "Comma-separated notify service names (e.g. mobile_app_my_phone, telegram) or notify entity IDs (e.g. notify.telegram_bot_123_456)",
           "active_months": "Select the months when the controller should be active.",
           "heatpump_power_entity": "Optional. Electrical power of the heat pump (W or kW). Enables the solar energy sensors: kWh the heat pump used on solar surplus during a boost.",
           "heatpump_heat_entity": "Optional. Heat the heat pump delivers to the house (W or kW), e.g. Quatt's CIC Total power. Enables the heat-on-solar sensors: kWh of heat produced from solar during a boost. Needs the heat pump power sensor.",

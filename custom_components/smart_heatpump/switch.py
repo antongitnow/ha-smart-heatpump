@@ -13,6 +13,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 import logging
 
 from .const import DOMAIN
+from .notifications import resolve_notify_call
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -185,10 +186,14 @@ class SmartHeatpumpDryRunSwitch(RestoreEntity, SwitchEntity):
             return
         for target_name in targets:
             try:
+                service, extra = resolve_notify_call(
+                    target_name,
+                    lambda n: self.hass.services.has_service("notify", n),
+                )
                 await self.hass.services.async_call(
                     "notify",
-                    target_name,
-                    {"title": "Smart Heatpump", "message": message},
+                    service,
+                    {"title": "Smart Heatpump", "message": message, **extra},
                     blocking=True,
                 )
             except Exception:
