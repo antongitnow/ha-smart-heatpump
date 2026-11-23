@@ -16,6 +16,9 @@ can start a boost.
 
 Battery power here is always "discharge positive": W the battery delivers to
 the house, negative while it charges.
+
+A boost only counts as running on the battery when the discharge minus the
+export at that moment stays above the limit (at least DISCHARGE_FLOOR_W).
 """
 
 from __future__ import annotations
@@ -31,6 +34,65 @@ def to_discharge_w(value: float, positive_discharge: bool) -> float:
 def effective_net_w(net_w: float, discharge_w: float, charge_w: float, heatpump_first: bool) -> float:
     """Grid power as it would be without the battery (positive = import)."""
     return net_w + max(0.0, discharge_w) - (max(0.0, charge_w) if heatpump_first else 0.0)
+
+
+# Battery discharge up to this much (W) is the battery's own balancing around
+# zero, not a boost running on the battery — the discharge limit never goes lower.
+DISCHARGE_FLOOR_W = 300.0
+
+# A P1 reading older than this (s) no longer says whether the meter is exporting
+P1_STALE_S = 300.0
+
+
+def discharge_limit_w(configured_w: float) -> float:
+    """The discharge limit in use: the configured one, at least DISCHARGE_FLOOR_W."""
+    return max(configured_w, DISCHARGE_FLOOR_W)
+
+
+def boost_discharge_w(discharge_w: float | None, net_w: float | None) -> float | None:
+    """Discharge that may be feeding a boost: the discharge minus what goes out to the grid.
+
+    Battery power the meter exports at the same moment isn't covering the
+    house (heat pump included) — the battery is just overshooting its zero
+    target.  ``net_w`` is P1 net (positive = import), or None when unknown —
+    then all discharge counts.
+    """
+    if discharge_w is None:
+        return None
+    if net_w is not None and net_w < 0:
+        return max(0.0, discharge_w + net_w)
+    return discharge_w
+
+
+def boost_discharge_series(
+    battery: Sequence[tuple[float, float]],
+    net: Sequence[tuple[float, float]],
+    stale_s: float = P1_STALE_S,
+) -> list[tuple[float, float]]:
+    """boost_discharge_w() over time: battery (discharge positive) and P1 net history merged.
+
+    Both inputs are (timestamp, value) sorted by time, each value holding
+    until the next; a P1 reading holds for at most ``stale_s``.  The result
+    starts at the first battery reading.  Mirrors boostDischargeSeries() in
+    the dashboard card.
+    """
+    if not battery:
+        return []
+    first = battery[0][0]
+    times = {ts for ts, _ in battery}
+    for ts, _ in net:
+        times.add(ts)
+        times.add(ts + stale_s)
+    out: list[tuple[float, float]] = []
+    i = j = -1
+    for ts in sorted(t for t in times if t >= first):
+        while i + 1 < len(battery) and battery[i + 1][0] <= ts:
+            i += 1
+        while j + 1 < len(net) and net[j + 1][0] <= ts:
+            j += 1
+        n = net[j][1] if j >= 0 and ts - net[j][0] < stale_s else None
+        out.append((ts, boost_discharge_w(battery[i][1], n)))  # type: ignore[arg-type]
+    return out
 
 
 def time_weighted_mean(

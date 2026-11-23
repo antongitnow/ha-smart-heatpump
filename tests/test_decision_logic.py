@@ -820,7 +820,7 @@ class TestStepDownBlockedWhileExporting:
 class TestHomeBattery:
     """A boost never runs on battery power."""
 
-    def test_battery_discharge_resets_running_boost(self) -> None:
+    def test_battery_discharge_drops_boost_to_room_temperature(self) -> None:
         target, rule, boost = _decide(
             solar_boost_active=True,
             avg_import_5min_w=100.0,  # below release low: would just hold
@@ -829,7 +829,56 @@ class TestHomeBattery:
             boost_active_seconds=3600,
             battery_discharging=True,
         )
+        # Paused at room temperature, not all the way back to ideal
+        assert (target, rule, boost) == (21.5, "solar_reset_battery", True)
+
+    def test_battery_reset_snaps_room_temperature_down(self) -> None:
+        target, _, boost = _decide(
+            solar_boost_active=True,
+            current_temperature=22.3,
+            current_setpoint=23.0,
+            battery_discharging=True,
+        )
+        assert (target, boost) == (22.0, True)
+
+    def test_battery_reset_never_raises_the_setpoint(self) -> None:
+        target, _, _ = _decide(
+            solar_boost_active=True,
+            current_temperature=22.8,
+            current_setpoint=22.0,
+            battery_discharging=True,
+        )
+        assert target == 22.0
+
+    def test_battery_reset_ends_boost_at_ideal(self) -> None:
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            current_temperature=20.6,
+            current_setpoint=21.5,
+            battery_discharging=True,
+        )
         assert (target, rule, boost) == (21.0, "solar_reset_battery", False)
+
+    def test_battery_reset_without_room_temperature_goes_to_ideal(self) -> None:
+        target, _, boost = _decide(
+            solar_boost_active=True,
+            current_temperature=None,
+            current_setpoint=22.5,
+            battery_discharging=True,
+        )
+        assert (target, boost) == (21.0, False)
+
+    def test_paused_boost_skips_minimum_run_during_cooldown(self) -> None:
+        # Right after a battery reset the minimum run must not raise it again
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            current_temperature=22.5,
+            current_setpoint=22.5,
+            boost_active_seconds=300,
+            min_boost_minutes=20,
+            battery_cooldown=True,
+        )
+        assert (target, rule, boost) == (22.5, "solar_boost_holding", True)
 
     def test_battery_reset_overrides_minimum_boost_duration(self) -> None:
         _, rule, boost = _decide(
@@ -853,16 +902,26 @@ class TestHomeBattery:
         assert boost is False
         assert target == 21.0
 
-    def test_cooldown_does_not_end_running_boost(self) -> None:
-        _, rule, boost = _decide(
+    def test_cooldown_holds_paused_boost(self) -> None:
+        target, rule, boost = _decide(
             solar_boost_active=True,
             avg_export_5min_w=800.0,
             current_temperature=21.5,
             current_setpoint=22.0,
             battery_cooldown=True,
         )
-        assert rule == "solar_incremental"
-        assert boost is True
+        # Neither ended nor stepped up until the cooldown has passed
+        assert (target, rule, boost) == (22.0, "solar_boost_holding", True)
+
+    def test_cooldown_still_allows_step_down(self) -> None:
+        target, rule, boost = _decide(
+            solar_boost_active=True,
+            avg_import_5min_w=400.0,
+            current_temperature=22.0,
+            current_setpoint=22.0,
+            battery_cooldown=True,
+        )
+        assert (target, rule, boost) == (21.5, "solar_step_down", True)
 
     def test_start_needs_the_heat_pump_draw(self) -> None:
         _, rule, _ = _decide(avg_export_5min_w=500.0, boost_start_export_w=750.0)

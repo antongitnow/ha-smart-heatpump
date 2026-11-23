@@ -29,7 +29,10 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .battery import (
+    P1_STALE_S,
     DischargeWatch,
+    boost_discharge_w,
+    discharge_limit_w,
     UnavailableWatch,
     effective_net_w,
     time_weighted_mean,
@@ -371,7 +374,11 @@ class SmartHeatpumpCoordinator:
         battery_discharging = battery_lost = False
         if has_battery:
             reaction_s = cfg.get("battery_reaction_minutes", 2.0) * 60
-            self._battery_watch.update(now_ts, battery_now, cfg.get("battery_discharge_limit", 50.0))
+            self._battery_watch.update(
+                now_ts,
+                boost_discharge_w(battery_now, self._read_fresh_net_power()),
+                discharge_limit_w(cfg.get("battery_discharge_limit", 300.0)),
+            )
             self._battery_lost.update(now_ts, battery_now is not None)
             if self._solar_boost_active:
                 battery_discharging = self._battery_watch.sustained(now_ts, reaction_s)
@@ -538,7 +545,8 @@ class SmartHeatpumpCoordinator:
                 self.solar_energy.count(today, "boosts")
             if rule == "solar_reset":
                 self.solar_energy.count(today, "resets")
-            if rule in _BATTERY_RESETS:
+            # A paused boost repeats the battery reset each evaluation — count it once
+            if rule in _BATTERY_RESETS and self.active_rule not in _BATTERY_RESETS:
                 self.solar_energy.count(today, "battery_resets")
         if rule in _BATTERY_RESETS:
             self._battery_reset_at = now_ts
@@ -711,10 +719,12 @@ class SmartHeatpumpCoordinator:
         def _on_state_change(_event: Any) -> None:
             self._check_battery()
 
+        # The P1 meter too: discharge that is exported at the same moment doesn't count
+        entities = [self.battery_power_entity]
+        if self._opt(CONF_P1_POWER):
+            entities.append(self._opt(CONF_P1_POWER))
         self._energy_unsubs.append(
-            async_track_state_change_event(
-                self.hass, [self.battery_power_entity], _on_state_change
-            )
+            async_track_state_change_event(self.hass, entities, _on_state_change)
         )
 
     @callback
@@ -727,14 +737,20 @@ class SmartHeatpumpCoordinator:
         now = dt_util.utcnow().timestamp()
         reaction_s = cfg.get("battery_reaction_minutes", 2.0) * 60
         discharge = self.read_battery_discharge_w()
-        self._battery_watch.update(now, discharge, cfg.get("battery_discharge_limit", 50.0))
+        self._battery_watch.update(
+            now,
+            boost_discharge_w(discharge, self._read_fresh_net_power()),
+            discharge_limit_w(cfg.get("battery_discharge_limit", 300.0)),
+        )
         self._battery_lost.update(now, discharge is not None)
         dues = [
             d for d in (self._battery_watch.due_at(reaction_s), self._battery_lost.due_at(reaction_s))
             if d is not None
         ]
         due = min(dues) if dues else None
-        if not self._solar_boost_active or due is None:
+        # A boost already paused by a battery reset is followed by the timer
+        paused = self.active_rule in _BATTERY_RESETS
+        if not self._solar_boost_active or due is None or paused:
             if self._battery_check:
                 self._battery_check()
                 self._battery_check = None
@@ -931,6 +947,17 @@ class SmartHeatpumpCoordinator:
             return float(temp)
         except (TypeError, ValueError):
             return None
+
+    def _read_fresh_net_power(self) -> float | None:
+        """P1 net power (W, positive = import), or None when unknown or older than P1_STALE_S."""
+        entity_id = self._opt(CONF_P1_POWER)
+        state = self.hass.states.get(entity_id) if entity_id else None
+        if state is None:
+            return None
+        seen = getattr(state, "last_reported", None) or state.last_updated
+        if (dt_util.utcnow() - seen).total_seconds() >= P1_STALE_S:
+            return None
+        return self._read_power_w(entity_id)
 
     def _read_net_power(self) -> float | None:
         """Read net grid power in watts (positive=import, negative=export)."""

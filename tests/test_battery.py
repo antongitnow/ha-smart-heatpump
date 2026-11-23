@@ -16,6 +16,9 @@ _spec = importlib.util.spec_from_file_location("battery", _path)
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 DischargeWatch = _mod.DischargeWatch
+boost_discharge_series = _mod.boost_discharge_series
+boost_discharge_w = _mod.boost_discharge_w
+discharge_limit_w = _mod.discharge_limit_w
 UnavailableWatch = _mod.UnavailableWatch
 discharge_sustained_within = _mod.discharge_sustained_within
 effective_net_w = _mod.effective_net_w
@@ -124,3 +127,33 @@ class TestUnavailableWatch:
         w.update(60, available=True)
         assert not w.sustained(500, 120)
         assert w.due_at(120) is None
+
+
+class TestBoostDischarge:
+    def test_limit_never_below_floor(self):
+        assert discharge_limit_w(50) == 300
+        assert discharge_limit_w(450) == 450
+
+    def test_export_is_subtracted(self):
+        # The reported case: 288 W discharge while exporting 155 W → 133 W counts
+        assert boost_discharge_w(288, -155) == 133
+        assert boost_discharge_w(100, -155) == 0
+        assert boost_discharge_w(500, 200) == 500  # importing: all of it counts
+        assert boost_discharge_w(500, None) == 500  # meter unknown: all of it counts
+        assert boost_discharge_w(None, -100) is None
+
+    def test_meter_jitter_around_zero_still_detects_discharge(self):
+        # A battery holding the meter at zero: ±30 W must not hide 800 W discharge
+        assert boost_discharge_w(800, -30) == 770
+
+    def test_series_merges_and_goes_stale(self):
+        bat = [(100, 400)]
+        net = [(0, -200), (150, 100)]
+        assert boost_discharge_series(bat, net, stale_s=300) == [
+            (100, 200), (150, 400), (300, 400), (450, 400),
+        ]
+        # A silent meter stops counting as export after stale_s
+        assert boost_discharge_series([(0, 400)], [(0, -1000)], stale_s=60) == [(0, 0), (60, 400)]
+
+    def test_series_empty_without_battery(self):
+        assert boost_discharge_series([], [(0, -100)]) == []

@@ -6,8 +6,10 @@ This module implements the solar-incremental thermostat control:
   - During heating season, when solar surplus is detected, boost setpoint
     incrementally above current room temperature.
   - When import rises, step down or reset.
-  - With a home battery, reset at once when the battery discharges during a
-    boost, and wait a cooldown before the next one.  While the battery is
+  - With a home battery, when the battery discharges during a boost, lower
+    the setpoint at once to room temperature (never below ideal) so the heat
+    pump stops heating; the boost stays paused there and only steps up again
+    after a cooldown.  While the battery is
     low, keep the boost at most a fixed margin above room temperature.
   - Thermal model ML learning continues independently (handled by coordinator).
 
@@ -107,9 +109,13 @@ def _decide_solar(
             home battery, the heat pump's boost draw, so the battery doesn't
             have to cover it.  The higher of this and the surplus threshold applies.
         battery_discharging: The home battery has discharged above its limit for
-            the reaction time.  Ends a running boost at once, even during the
-            minimum boost duration.
-        battery_cooldown: A battery reset happened recently — no new boost yet.
+            the reaction time.  Lowers a running boost at once to room
+            temperature (snapped down to 0.5, never below ideal), even during
+            the minimum boost duration.  The boost stays active there (paused)
+            unless that is the ideal temperature.
+        battery_cooldown: A battery reset happened recently — no new boost,
+            and a paused boost neither steps up nor runs its minimum boost
+            duration.
         battery_unavailable: No usable battery reading.  Blocks a new boost;
             ends a running one (the caller passes it for a running boost once
             the outage has lasted the reaction time).
@@ -163,12 +169,25 @@ def _decide_solar(
     # Branch: solar boost IS currently active
     # A boost never runs on battery power — this overrides the minimum run time
     if battery_discharging:
-        return temp_ideal, "solar_reset_battery", False
+        # Soft reset: drop to room temperature so the heat pump stops, but
+        # keep the boost so the next surplus only needs one step back up
+        if current_temperature is None:
+            return temp_ideal, "solar_reset_battery", False
+        target = max(_snap_half(current_temperature), temp_ideal)
+        if current_setpoint is not None:
+            target = min(target, current_setpoint)
+        target = min(max(target, temp_ideal), max_boost_temp)
+        return target, "solar_reset_battery", target > temp_ideal
     if battery_unavailable:
         return temp_ideal, "solar_reset_battery_unavailable", False
 
     # Minimum run time protection — keep boost active and setpoint ahead of room temp
-    in_min_run = min_boost_minutes > 0 and boost_active_seconds < min_boost_minutes * 60
+    # (not while paused after a battery reset — it would raise the setpoint again)
+    in_min_run = (
+        min_boost_minutes > 0
+        and boost_active_seconds < min_boost_minutes * 60
+        and not battery_cooldown
+    )
     if in_min_run:
         # During minimum run: keep setpoint between room_temp + delta and room_temp + 1.0
         if current_setpoint is not None:
@@ -219,7 +238,8 @@ def _decide_solar(
     # Import is below the release threshold, but only keep stepping up while
     # there is real surplus. In the dead band (small import / small export)
     # hold the setpoint — raising it there would just pull more from the grid.
-    if avg_import_5min_w > 0 or avg_export_5min_w <= solar_surplus_threshold:
+    # Paused after a battery reset: no step up until the cooldown has passed.
+    if avg_import_5min_w > 0 or avg_export_5min_w <= solar_surplus_threshold or battery_cooldown:
         return (
             current_setpoint if current_setpoint is not None else temp_ideal,
             "solar_boost_holding",

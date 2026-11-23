@@ -88,7 +88,10 @@ class SmartHeatpumpNumber(RestoreNumber):
         await super().async_added_to_hass()
         last = await self.async_get_last_number_data()
         if last and last.native_value is not None:
-            self._attr_native_value = last.native_value
+            # Clamp: a range may have changed since (e.g. discharge limit min 300 W)
+            self._attr_native_value = min(
+                max(last.native_value, self._attr_native_min_value), self._attr_native_max_value
+            )
 
         # Push restored (or default) value to coordinator
         self._coordinator.set_config_value(self._key, self._attr_native_value)

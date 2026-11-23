@@ -227,8 +227,8 @@ The controller only reads the battery and never controls it, so it works next to
 
 1. **Grid power without the battery.** The controller decides on what the meter would show without the battery: *P1 + battery discharge − battery charge*. Battery discharge always counts as import. Battery charging counts as export only with **Solar to heat pump before battery** on.
 2. **Start a boost** when the 5-minute average export is above both the surplus threshold and the **Heat pump boost draw** — so the surplus covers the heat pump and the battery doesn't have to.
-3. **Battery reset** (`solar_reset_battery`). When the battery discharges more than the **Battery discharge limit** (default 50 W) for the **Battery reaction time** (default 2 min) during a boost, the setpoint goes straight back to ideal and the boost ends. This overrides the minimum boost duration, and the controller acts on the battery sensor's own readings instead of waiting for its next evaluation.
-4. **Cooldown** (`solar_battery_cooldown`). After a battery reset, no new boost starts for the **Cooldown after battery reset** (default 30 min), so passing clouds don't make boosts start and stop over and over.
+3. **Battery reset** (`solar_reset_battery`). When the battery discharges more than the **Battery discharge limit** (default and minimum 300 W) for the **Battery reaction time** (default 2 min) during a boost, the setpoint drops at once to room temperature (rounded down to 0.5 °C, never below ideal), so the heat pump stops heating. Discharge that the meter exports at the same moment doesn't count: 288 W discharge while exporting 155 W is only 133 W, the battery overshooting its zero target. Smaller discharges are the battery's own balancing and are ignored. The boost stays paused at room temperature, so when the surplus comes back it only needs one step up instead of a full restart. If the room cools or the battery keeps discharging, the setpoint follows the room down; at the ideal temperature the boost ends. This overrides the minimum boost duration, and the controller acts on the battery and P1 sensors' own readings instead of waiting for its next evaluation.
+4. **Cooldown** (`solar_battery_cooldown`). After a battery reset, no new boost starts and a paused boost doesn't step up for the **Cooldown after battery reset** (default 30 min), so passing clouds don't make the setpoint go up and down over and over. The normal step-down and reset rules still apply.
 5. **Release thresholds** still apply, to the import without the battery.
 6. **Battery sensor unavailable** (`battery_unavailable`): no new boost starts. A running boost ends once the sensor has been unavailable for the reaction time (`solar_reset_battery_unavailable`) — the battery could be feeding it unseen. This counts as a battery reset, with the same cooldown.
 7. **Battery resets don't wait for the P1 meter.** When the P1 meter has too little recent data (e.g. right after a restart), the controller skips its decision, except a battery reset.
@@ -346,7 +346,7 @@ The **Active rule** sensor shows the controller's current decision:
 | `default` | Normal operation — maintaining ideal temperature |
 | `error_fallback` | Error occurred — using safe fallback temperature |
 | `initialising` | Controller starting up |
-| `solar_reset_battery` | Battery discharging during a boost — resetting setpoint to ideal and deactivating boost |
+| `solar_reset_battery` | Battery discharging during a boost — lowering setpoint to room temperature (boost paused; it ends at ideal) |
 | `solar_battery_cooldown` | Waiting after a battery reset — no new boost yet |
 | `battery_unavailable` | Battery sensor unavailable — no new boost |
 | `solar_battery_cap` | Battery below the full-boost level — lowering the boost to room + 0.5 °C |

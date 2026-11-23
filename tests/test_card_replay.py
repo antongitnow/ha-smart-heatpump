@@ -264,11 +264,36 @@ def test_battery_helpers_match_python():
         assert got[2] == sustained, c
 
 
+def test_boost_discharge_series_matches_python():
+    rng = random.Random(5)
+    cases = []
+    for _ in range(1000):
+        bat, net, t = [], [], rng.uniform(0, 100)
+        for _ in range(rng.randint(0, 6)):
+            t += rng.choice([1.0, rng.uniform(5, 400)])
+            bat.append([t, rng.choice([0.0, 400.0, -300.0, rng.uniform(-800, 800)])])
+        t = rng.uniform(-200, 100)
+        for _ in range(rng.randint(0, 6)):
+            t += rng.choice([1.0, rng.uniform(5, 400)])
+            net.append([t, rng.choice([0.0, -50.0, 200.0, rng.uniform(-1500, 1500)])])
+        cases.append({"bat": bat, "net": net})
+    js = _run_node(
+        "console.log(JSON.stringify(input.map((c) => card.boostDischargeSeries(c.bat, c.net, 300))));",
+        cases,
+    )
+    for c, got in zip(cases, js):
+        want = _battery.boost_discharge_series(
+            [tuple(x) for x in c["bat"]], [tuple(x) for x in c["net"]], 300
+        )
+        assert [tuple(x) for x in got] == pytest.approx(want), c
+
+
 def _python_replay_battery(readings: list, temps: list, bat: list, p: dict, soc: list | None = None) -> list:
     """Reference battery replay: the coordinator's semantics at each evaluation."""
     out = []
     active, sp, activated_at, reset_at = False, None, None, None
     iv = p["interval"] * 60
+    bat_boost = _battery.boost_discharge_series(bat, readings)
     t = p["start"] + iv
     pos = lambda v: max(0.0, v)  # noqa: E731
     neg = lambda v: max(0.0, -v)  # noqa: E731
@@ -282,7 +307,7 @@ def _python_replay_battery(readings: list, temps: list, bat: list, p: dict, soc:
         if lost:
             dis = chg = now = 0.0
         discharging = active and not lost and _battery.discharge_sustained_within(
-            bat, t - iv, t, p["batLimit"], p["batReact"] * 60
+            bat_boost, t - iv, t, _battery.discharge_limit_w(p["batLimit"]), p["batReact"] * 60
         )
         enough = len(window) >= MIN_READINGS
         if not enough and not (active and (discharging or lost)):
@@ -368,10 +393,10 @@ def _battery_day(seed: int) -> tuple[list, list, list, list]:
 @pytest.mark.parametrize("hp_first", [False, True])
 @pytest.mark.parametrize("with_soc", [False, True])
 def test_battery_replay_matches_coordinator_semantics(hp_first, with_soc):
-    readings, temps, bat, levels = _battery_day(11)
+    readings, temps, bat, levels = _battery_day(12)
     params = dict(start=0, end=86400, interval=5, ideal=21.0, S=300.0, L=200.0, H=600.0,
                   step=0.5, minBoost=20.0, maxBoost=24.5, hpFirst=hp_first, startExport=750.0,
-                  batLimit=50.0, batReact=2.0, batCool=30.0, fullSoc=80.0)
+                  batLimit=300.0, batReact=2.0, batCool=30.0, fullSoc=80.0)
     soc = levels if with_soc else None
     expected = _python_replay_battery(readings, temps, bat, params, soc)
     to_ms = lambda series: [[ts * 1000, v] for ts, v in series]  # noqa: E731
@@ -430,9 +455,11 @@ def test_battery_reset_runs_without_p1_data():
     )
     assert [row[1:] for row in js] == [row[1:] for row in expected]
     rules = [row[1] for row in expected]
-    # The tick at 35 min has no P1 data in its window, yet resets the boost
-    assert rules[6] == "solar_reset_battery"
-    assert rules[7:] == ["waiting_for_data"] * 5
+    # The last P1 reading (export) counts for 5 min; from then on the discharge
+    # counts, and the tick at 40 min resets the boost without P1 data
+    assert rules[6] == "waiting_for_data"
+    assert rules[7] == "solar_reset_battery"
+    assert rules[8:] == ["waiting_for_data"] * 4
 
 
 def test_replay_follows_recorded_ideal_changes() -> None:

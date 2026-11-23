@@ -8,8 +8,8 @@
  * Served and auto-loaded by the integration (see __init__.async_setup).
  * Dashboard YAML:  type: custom:smart-heatpump-card
  *
- * decideSolar() mirrors decision.decide_solar(), and timeMean() and
- * dischargeSustainedWithin() mirror battery.py — keep them in sync;
+ * decideSolar() mirrors decision.decide_solar(), and timeMean(),
+ * boostDischargeSeries() and dischargeSustainedWithin() mirror battery.py — keep them in sync;
  * tests/test_card_replay.py checks them against each other.
  */
 
@@ -18,6 +18,8 @@ const AVG_WINDOW_MS = 5 * 60 * 1000; // coordinator._AVG_WINDOW_MINUTES
 const MIN_READINGS = 3; // coordinator._MIN_READINGS_FOR_AVG
 const HISTORY_DAYS = 10; // recorder default purge_keep_days
 const LOW_BATTERY_MAX_ABOVE_ROOM = 0.5; // const.LOW_BATTERY_MAX_ABOVE_ROOM
+const DISCHARGE_FLOOR_W = 300; // battery.DISCHARGE_FLOOR_W
+const P1_STALE_MS = 300 * 1000; // battery.P1_STALE_S
 
 // translation_key → name used in the card
 const NUMBER_KEYS = {
@@ -93,10 +95,16 @@ function decideSolarUncapped(i) {
     return [hold, "no_solar_action", false];
   }
 
-  if (batteryDischarging) return [ideal, "solar_reset_battery", false];
+  if (batteryDischarging) {
+    if (temp === null) return [ideal, "solar_reset_battery", false];
+    let t = Math.max(snapHalf(temp), ideal);
+    if (setpoint !== null) t = Math.min(t, setpoint);
+    t = Math.min(Math.max(t, ideal), maxBoost);
+    return [t, "solar_reset_battery", t > ideal];
+  }
   if (batteryUnavailable) return [ideal, "solar_reset_battery_unavailable", false];
 
-  if (minBoostMin > 0 && boostSeconds < minBoostMin * 60) {
+  if (minBoostMin > 0 && boostSeconds < minBoostMin * 60 && !batteryCooldown) {
     let t;
     if (setpoint !== null) t = setpoint;
     else if (temp !== null) t = temp + step;
@@ -119,7 +127,7 @@ function decideSolarUncapped(i) {
     return [t, "solar_step_down", true];
   }
 
-  if (avgImport > 0 || avgExport <= S) return [hold, "solar_boost_holding", true];
+  if (avgImport > 0 || avgExport <= S || batteryCooldown) return [hold, "solar_boost_holding", true];
 
   let t;
   if (setpoint !== null) t = setpoint + step;
@@ -189,6 +197,29 @@ export function dischargeSustainedWithin(series, a, b, limit, react) {
   return false;
 }
 
+// Battery discharge that may feed a boost: the discharge minus the P1 export.
+// bat: [[t, W]] discharge positive; net: P1 [[t, W]] positive = import, each
+// reading holding for at most staleMs. Mirrors battery.boost_discharge_series().
+export function boostDischargeSeries(bat, net, staleMs = P1_STALE_MS) {
+  if (!bat.length) return [];
+  const first = bat[0][0];
+  const set = new Set(bat.map((x) => x[0]));
+  for (const [t] of net) {
+    set.add(t);
+    set.add(t + staleMs);
+  }
+  const times = [...set].filter((t) => t >= first).sort((a, b) => a - b);
+  const out = [];
+  let i = -1, j = -1;
+  for (const t of times) {
+    while (i + 1 < bat.length && bat[i + 1][0] <= t) i++;
+    while (j + 1 < net.length && net[j + 1][0] <= t) j++;
+    const n = j >= 0 && t - net[j][0] < staleMs ? net[j][1] : null;
+    out.push([t, n !== null && n < 0 ? Math.max(0, bat[i][1] + n) : bat[i][1]]);
+  }
+  return out;
+}
+
 const pos = (v) => Math.max(0, v);
 const neg = (v) => Math.max(0, -v);
 
@@ -221,6 +252,8 @@ export function replay(readings, temps, p, hp = null, bat = null, soc = null) {
 
   const ticks = [];
   let active = false, sp = null, activatedAt = null, batResetAt = null;
+  const batBoost = bat ? boostDischargeSeries(bat, readings) : null;
+  const batLimit = Math.max(p.batLimit ?? 0, DISCHARGE_FLOOR_W);
   for (let T = p.start + iv; T <= p.end; T += iv) {
     const bar = mean(T - iv, T);
     const win = mean(T - AVG_WINDOW_MS, T);
@@ -242,7 +275,7 @@ export function replay(readings, temps, p, hp = null, bat = null, soc = null) {
       const lost = dis === null || now === null;
       if (lost) dis = chg = now = 0;
       extra.startExport = p.startExport;
-      extra.batteryDischarging = active && !lost && dischargeSustainedWithin(bat, T - iv, T, p.batLimit, p.batReact * 60000);
+      extra.batteryDischarging = active && !lost && dischargeSustainedWithin(batBoost, T - iv, T, batLimit, p.batReact * 60000);
       extra.batteryUnavailable = lost;
       extra.batteryCooldown = batResetAt !== null && T - batResetAt < p.batCool * 60000;
     }
@@ -295,7 +328,9 @@ function summarise(ticks, interval, hpKnown) {
   let was = false;
   ticks.forEach((k, i) => {
     if (k.active && !was) s.starts++;
-    if (["solar_reset", "solar_reset_battery", "solar_reset_battery_unavailable"].includes(k.rule)) s.resets++;
+    // A paused boost repeats the battery reset each evaluation — count it once
+    if (["solar_reset", "solar_reset_battery", "solar_reset_battery_unavailable"].includes(k.rule)
+        && !(i > 0 && ticks[i - 1].rule === k.rule)) s.resets++;
     was = k.active;
     if (k.active) s.peak = Math.max(s.peak ?? k.sp, k.sp);
     // The state decided at tick i applies until tick i+1, whose bar covers that span
@@ -1024,8 +1059,9 @@ class SmartHeatpumpCard extends HTMLElement {
         ? ` With your home battery the lines apply to the grid power as it would be without the battery: ` +
           `battery discharge counts as import${base.hpFirst ? " and battery charging as export" : ""}. ` +
           `A boost needs at least ${Math.round(Math.max(cur.S, base.startExport))} W export to start (the heat pump's boost draw), ` +
-          `ends at once when the battery discharges more than ${base.batLimit} W for ${base.batReact} min, ` +
-          `even in the minimum boost duration, and then waits ${base.batCool} min before the next one.`
+          `drops at once to room temperature when the battery discharges more than ${Math.max(base.batLimit, DISCHARGE_FLOOR_W)} W ` +
+          `(minus any export) for ${base.batReact} min, even in the minimum boost duration, ` +
+          `and then waits ${base.batCool} min before stepping up again.`
         : "") +
       (base.fullSoc !== undefined
         ? ` While the battery is below ${base.fullSoc} %, a boost stays at most ${LOW_BATTERY_MAX_ABOVE_ROOM} °C above room temperature.`

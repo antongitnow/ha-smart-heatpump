@@ -42,7 +42,7 @@ DEFAULTS: dict[str, float] = {
     "price_import": 0.30,
     "price_export": 0.0,
     # Home battery: a boost must never run on battery power
-    "battery_discharge_limit": 50.0,
+    "battery_discharge_limit": 300.0,  # never below battery.DISCHARGE_FLOOR_W
     "battery_reaction_minutes": 2.0,
     "battery_cooldown_minutes": 30.0,
     "heatpump_boost_draw": 0.0,  # 0 = learn from the heat pump power sensor
@@ -97,7 +97,7 @@ NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]] = [
 
 # Created only when a battery power sensor is configured
 BATTERY_NUMBER_DEFINITIONS: list[tuple[str, str, float, float, float, str, str]] = [
-    ("battery_discharge_limit", "Battery discharge limit", 0, 500, 10, "W", "mdi:battery-arrow-down"),
+    ("battery_discharge_limit", "Battery discharge limit", 300, 1500, 10, "W", "mdi:battery-arrow-down"),
     ("battery_reaction_minutes", "Battery reaction time", 0, 10, 0.5, "min", "mdi:timer-alert-outline"),
     ("battery_cooldown_minutes", "Cooldown after battery reset", 0, 120, 5, "min", "mdi:timer-sand-paused"),
     ("heatpump_boost_draw", "Heat pump boost draw", 0, 3000, 50, "W", "mdi:heat-pump-outline"),
@@ -119,7 +119,7 @@ RULE_DESCRIPTIONS: dict[str, str] = {
     "no_solar_action": "No solar action",
     "solar_boost_holding": "Solar boost active - holding setpoint",
     "solar_min_run": "Minimum run time - keeping boost active",
-    "solar_reset_battery": "Battery discharging during boost - resetting setpoint to ideal",
+    "solar_reset_battery": "Battery discharging during boost - lowering setpoint to room temperature",
     "solar_reset_battery_unavailable": "Battery sensor unavailable during boost - resetting setpoint to ideal",
     "solar_battery_cooldown": "Waiting after a battery reset - no new boost yet",
     "solar_battery_cap": "Battery below full-boost level - keeping boost near room temperature",
